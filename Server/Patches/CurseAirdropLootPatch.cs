@@ -2,7 +2,7 @@ using System.Reflection;
 using HarmonyLib;
 using SPTarkov.Reflection.Patching;
 using SPTarkov.Server.Core.Models.Eft.Location;
-using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Services.InRaid;
 
 namespace YellowFlareCurse.Patches;
 

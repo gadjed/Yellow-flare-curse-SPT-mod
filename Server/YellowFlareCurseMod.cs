@@ -1,39 +1,38 @@
 using System.Reflection;
+using SPTarkov.Common.Models.Logging;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Reflection.Patching;
 using SPTarkov.Server.Core.DI;
-using SPTarkov.Server.Core.Helpers;
+using SPTarkov.Server.Core.Helpers.Server;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Enums;
 using SPTarkov.Server.Core.Models.Spt.Config;
 using SPTarkov.Server.Core.Models.Spt.Mod;
-using SPTarkov.Server.Core.Models.Utils;
-using SPTarkov.Server.Core.Servers;
 using YellowFlareCurse.Patches;
 using Path = System.IO.Path;
 
 namespace YellowFlareCurse;
 
-public record ModMetadata : AbstractModMetadata
+public record ModMetadata : IModMetadata
 {
-    public override string ModGuid { get; init; } = "gadjed.yellowflarecurse";
-    public override string Name { get; init; } = "Yellow Flare Curse";
-    public override string Author { get; init; } = "gadjed";
-    public override List<string>? Contributors { get; init; } = null;
-    public override SemanticVersioning.Version Version { get; init; } = new("1.0.0");
-    public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
-    public override List<string>? Incompatibilities { get; init; } = null;
-    public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = null;
-    public override string? Url { get; init; } = "https://github.com/gadjed/Yellow-flare-curse-SPT-mod";
-    public override bool? IsBundleMod { get; init; } = false;
-    public override string? License { get; init; } = "MIT";
+    public string ModGuid { get; init; } = "gadjed.yellowflarecurse";
+    public string Name { get; init; } = "Yellow Flare Curse";
+    public string Author { get; init; } = "gadjed";
+    public List<string>? Contributors { get; init; } = null;
+    public SemanticVersioning.Version Version { get; init; } = new("1.1.0");
+    public SemanticVersioning.Range SptVersion { get; init; } = new("~4.1.0");
+    public bool HasPrepatcher { get; init; } = false;
+    public List<string>? Incompatibilities { get; init; } = null;
+    public Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = null;
+    public string? Url { get; init; } = "https://github.com/gadjed/Yellow-flare-curse-SPT-mod";
+    public string License { get; init; } = "MIT";
 }
 
-[Injectable(TypePriority = OnLoadOrder.PostDBModLoader + 1)]
+[Injectable(TypePriority = OnLoadOrder.PostLoad + 1)]
 public class YellowFlareCurseMod(
     ISptLogger<YellowFlareCurseMod> logger,
     ModHelper modHelper,
-    ConfigServer configServer,
+    AirdropConfig airdropConfig,
     PatchManager patchManager
 ) : IOnLoad
 {
@@ -44,7 +43,7 @@ public class YellowFlareCurseMod(
     public static Dictionary<MongoId, MinMax<int>> ForcedLoot { get; private set; } = new();
     public static AirdropLoot? MixedLootProfile { get; private set; }
 
-    public Task OnLoad()
+    public Task OnLoadAsync(CancellationToken cancellationToken)
     {
         var pathToMod = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
         var configPath = Path.Combine(pathToMod, "config.json");
@@ -67,7 +66,6 @@ public class YellowFlareCurseMod(
         CurseContainerId = new MongoId(Config.CurseContainerId);
         ForcedLoot = BuildForcedLoot(Config);
 
-        var airdropConfig = configServer.GetConfig<AirdropConfig>();
         airdropConfig.CustomAirdropMapping[CurseContainerId] = SptAirdropTypeEnum.mixed;
 
         // Ensure mixed loot profile can carry forced stacks when our patch runs.

@@ -10,7 +10,7 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "gadjed.yellowflarecurse";
     public const string PluginName = "Yellow Flare Curse";
-    public const string PluginVersion = "1.0.0";
+    public const string PluginVersion = "1.1.0";
 
     /// <summary>RSP-30 reactive signal cartridge (Yellow).</summary>
     public const string YellowFlareTemplateId = "624c0b3340357b5f566e8766";

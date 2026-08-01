@@ -1,10 +1,10 @@
 # Yellow Flare Curse
 
-**SPT 4.0.13 Compatible**
+**SPT 4.1.0 Compatible**
 
 Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs and PMC bots already on the map aggro you (and your group), then after **10 minutes** an airdrop lands at the nearest airdrop point with high-value loot.
 
-Developed and tested against **SPT 4.0.13**.
+Developed and tested against **SPT 4.1.0**.
 
 [Latest release](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases/latest) · [License: MIT](LICENSE)
 
