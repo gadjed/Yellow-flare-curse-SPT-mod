@@ -9,7 +9,7 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "gadjed.yellowflarecurse";
     public const string PluginName = "Yellow Flare Curse";
-    public const string PluginVersion = "1.2.1";
+    public const string PluginVersion = "1.3.0";
 
     /// <summary>
     /// Ammo template fired by RSP-30 Yellow (HandleFlareSuccessEvent receives ammo, not the handheld weapon id).
@@ -28,6 +28,10 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
     public static ConfigEntry<float> AirdropDelaySeconds { get; private set; } = null!;
     public static ConfigEntry<bool> ShowCountdown { get; private set; } = null!;
     public static ConfigEntry<bool> CursePlayerGroup { get; private set; } = null!;
+    public static ConfigEntry<bool> TeleportBotsNearPlayer { get; private set; } = null!;
+    public static ConfigEntry<float> TeleportMinRadius { get; private set; } = null!;
+    public static ConfigEntry<float> TeleportMaxRadius { get; private set; } = null!;
+    public static ConfigEntry<bool> AiAlliance { get; private set; } = null!;
 
     private void Awake()
     {
@@ -61,9 +65,34 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
             true,
             "Existing scav/PMC bots also aggro your teammates (same GroupId)."
         );
+        TeleportBotsNearPlayer = Config.Bind(
+            "3. Curse",
+            "TeleportBotsNearPlayer",
+            true,
+            "On curse start (host/authority only), teleport eligible scav/PMC AI into a ring near the player."
+        );
+        TeleportMinRadius = Config.Bind(
+            "3. Curse",
+            "TeleportMinRadius",
+            15f,
+            new ConfigDescription("Minimum teleport ring radius (meters).", new AcceptableValueRange<float>(5f, 80f))
+        );
+        TeleportMaxRadius = Config.Bind(
+            "3. Curse",
+            "TeleportMaxRadius",
+            40f,
+            new ConfigDescription("Maximum teleport ring radius (meters).", new AcceptableValueRange<float>(10f, 120f))
+        );
+        AiAlliance = Config.Bind(
+            "3. Curse",
+            "AiAlliance",
+            true,
+            "During the curse, make eligible AI allied with each other so they only hunt players."
+        );
 
         new GameWorldPatch().Enable();
         new FlareSuccessPatch().Enable();
+        new CurseAddEnemyPatch().Enable();
 
         ModLogger.Info(
             $"{PluginName} v{PluginVersion} loaded. YellowTpl={YellowFlareTemplateId}, "

@@ -1,21 +1,29 @@
+using System.Collections;
 using System.Collections.Generic;
 using EFT;
 using EFT.Airdrop;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace YellowFlareCurse.Client;
 
 public class CurseEventComponent : MonoBehaviour
 {
     private const float CurseRefreshInterval = 5f;
+    private const float NavMeshSampleRadius = 8f;
+    private const float GoldenAngleDegrees = 137.5f;
 
     public static CurseEventComponent? Instance { get; private set; }
+
+    /// <summary>True while curse is active and AI alliance mode is enabled.</summary>
+    public static bool AllianceActive { get; private set; }
 
     private GameWorld? _gameWorld;
     private bool _eventUsed;
     private bool _eventActive;
     private bool _airdropSpawned;
     private bool _overlayVisible;
+    private bool _teleportStarted;
     private float _airdropAtTime;
     private float _announceUntil;
     private float _overlayHideAt;
@@ -37,8 +45,10 @@ public class CurseEventComponent : MonoBehaviour
         _gameWorld = gameWorld;
         _eventUsed = false;
         _eventActive = false;
+        AllianceActive = false;
         _airdropSpawned = false;
         _overlayVisible = false;
+        _teleportStarted = false;
         _announceUntil = 0f;
         _overlayHideAt = 0f;
         _nextCurseRefresh = 0f;
@@ -51,7 +61,8 @@ public class CurseEventComponent : MonoBehaviour
         ModLogger.Info(
             $"Raid component ready. Location={location}, AirdropPoints={airdropPoints}, "
                 + $"Enabled={YellowFlareCursePlugin.Enabled.Value}, "
-                + $"Delay={YellowFlareCursePlugin.AirdropDelaySeconds.Value:0}s."
+                + $"Delay={YellowFlareCursePlugin.AirdropDelaySeconds.Value:0}s, "
+                + $"Authority={FikaHost.IsAuthority()}."
         );
     }
 
@@ -61,6 +72,8 @@ public class CurseEventComponent : MonoBehaviour
         {
             Instance = null;
         }
+
+        AllianceActive = false;
 
         if (_bannerBg != null)
         {
@@ -104,8 +117,10 @@ public class CurseEventComponent : MonoBehaviour
 
         _eventUsed = true;
         _eventActive = true;
+        AllianceActive = YellowFlareCursePlugin.AiAlliance.Value;
         _airdropSpawned = false;
         _overlayVisible = true;
+        _teleportStarted = false;
         _flarePosition = flarePosition;
         var delay = YellowFlareCursePlugin.AirdropDelaySeconds.Value;
         _airdropAtTime = Time.time + delay;
@@ -119,12 +134,128 @@ public class CurseEventComponent : MonoBehaviour
         _announceSubtitle = $"Scavs & PMCs are hunting you  ·  Airdrop in {minutes:00}:{seconds:00}";
         _countdownText = $"AIRDROP  {minutes:00}:{seconds:00}";
 
-        var cursed = ApplyCurseSnapshot(initial: true);
+        if (
+            YellowFlareCursePlugin.TeleportBotsNearPlayer.Value
+            && FikaHost.IsAuthority()
+            && !_teleportStarted
+        )
+        {
+            _teleportStarted = true;
+            StartCoroutine(TeleportThenCurseRoutine());
+        }
+        else
+        {
+            if (YellowFlareCursePlugin.TeleportBotsNearPlayer.Value && !FikaHost.IsAuthority())
+            {
+                ModLogger.Info("Teleport skipped — not Fika host/authority.");
+            }
+
+            FinishCurseApply(initial: true);
+        }
+
         ModLogger.Info(
-            $"CURSE STARTED at {flarePosition}. Aggroed {cursed} bot(s). "
-                + $"AirdropPoints={pointCount}. Airdrop in {delay:0}s "
-                + $"(container={YellowFlareCursePlugin.CurseContainerId})."
+            $"CURSE STARTED at {flarePosition}. AirdropPoints={pointCount}. "
+                + $"Airdrop in {delay:0}s (container={YellowFlareCursePlugin.CurseContainerId}). "
+                + $"Teleport={YellowFlareCursePlugin.TeleportBotsNearPlayer.Value}, "
+                + $"Alliance={AllianceActive}, Authority={FikaHost.IsAuthority()}."
         );
+    }
+
+    private IEnumerator TeleportThenCurseRoutine()
+    {
+        var teleported = 0;
+        var failed = 0;
+
+        if (_gameWorld == null)
+        {
+            FinishCurseApply(initial: true);
+            yield break;
+        }
+
+        var main = _gameWorld.MainPlayer;
+        if (main == null || !main.HealthController.IsAlive)
+        {
+            ModLogger.Warning("Teleport aborted — no alive MainPlayer.");
+            FinishCurseApply(initial: true);
+            yield break;
+        }
+
+        var center = main.Position;
+        var minR = Mathf.Min(
+            YellowFlareCursePlugin.TeleportMinRadius.Value,
+            YellowFlareCursePlugin.TeleportMaxRadius.Value
+        );
+        var maxR = Mathf.Max(
+            YellowFlareCursePlugin.TeleportMinRadius.Value,
+            YellowFlareCursePlugin.TeleportMaxRadius.Value
+        );
+
+        var bots = CollectEligibleBotPlayers(_gameWorld);
+        ModLogger.Info(
+            $"Teleporting {bots.Count} eligible AI near player "
+                + $"(ring {minR:0}-{maxR:0}m, center={center})."
+        );
+
+        for (var i = 0; i < bots.Count; i++)
+        {
+            var botPlayer = bots[i];
+            if (botPlayer == null || !botPlayer.HealthController.IsAlive)
+            {
+                continue;
+            }
+
+            var angle = (i * GoldenAngleDegrees) * Mathf.Deg2Rad;
+            var t = bots.Count <= 1 ? 0.5f : (i % 5) / 4f;
+            var radius = Mathf.Lerp(minR, maxR, t);
+            var candidate = center + new Vector3(Mathf.Cos(angle) * radius, 0f, Mathf.Sin(angle) * radius);
+
+            if (!TryFindNavMesh(candidate, out var navPos) && !TryFindNavMesh(center, out navPos))
+            {
+                failed++;
+                ModLogger.Debug($"No NavMesh near {candidate} for {botPlayer.Profile?.Nickname}.");
+                continue;
+            }
+
+            try
+            {
+                botPlayer.Teleport(navPos, onServerToo: true);
+                var mover = botPlayer.AIData?.BotOwner?.Mover;
+                mover?.Teleport(navPos);
+                teleported++;
+                ModLogger.Debug(
+                    $"Teleported {botPlayer.Profile?.Nickname} → {navPos} (r≈{radius:0.0}m)."
+                );
+            }
+            catch (System.Exception ex)
+            {
+                failed++;
+                ModLogger.Debug($"Teleport failed for {botPlayer.Profile?.Nickname}: {ex.Message}");
+            }
+
+            if ((i + 1) % 3 == 0)
+            {
+                yield return null;
+            }
+        }
+
+        ModLogger.Info($"Teleport finished: ok={teleported}, failed={failed}.");
+        // Let physics/NavMesh settle one frame, then apply aggro + alliance.
+        yield return null;
+        FinishCurseApply(initial: true);
+    }
+
+    private void FinishCurseApply(bool initial)
+    {
+        if (AllianceActive)
+        {
+            ApplyAiAlliance();
+        }
+
+        var cursed = ApplyCurseSnapshot(initial);
+        if (initial)
+        {
+            ModLogger.Info($"Initial curse apply finished — aggroed {cursed} bot(s).");
+        }
     }
 
     private void Update()
@@ -142,6 +273,11 @@ public class CurseEventComponent : MonoBehaviour
         if (Time.time >= _nextCurseRefresh)
         {
             _nextCurseRefresh = Time.time + CurseRefreshInterval;
+            if (AllianceActive)
+            {
+                ApplyAiAlliance();
+            }
+
             ApplyCurseSnapshot(initial: false);
         }
 
@@ -301,6 +437,72 @@ public class CurseEventComponent : MonoBehaviour
         ModLogger.Debug("Overlay hidden — event UI finished.");
     }
 
+    private int ApplyAiAlliance()
+    {
+        if (_gameWorld == null)
+        {
+            return 0;
+        }
+
+        var bots = CollectEligibleBotPlayers(_gameWorld);
+        if (bots.Count < 2)
+        {
+            return 0;
+        }
+
+        var allyLinks = 0;
+        var clearedEnemies = 0;
+
+        for (var i = 0; i < bots.Count; i++)
+        {
+            var botA = bots[i];
+            var group = botA.AIData?.BotOwner?.BotsGroup;
+            if (group == null)
+            {
+                continue;
+            }
+
+            for (var j = 0; j < bots.Count; j++)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+
+                var botB = bots[j];
+                try
+                {
+                    if (group.IsEnemy(botB))
+                    {
+                        group.RemoveEnemy(botB);
+                        clearedEnemies++;
+                    }
+
+                    if (!group.Allies.Contains(botB))
+                    {
+                        group.AddAlly(botB);
+                        allyLinks++;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    ModLogger.Debug(
+                        $"Alliance {botA.Profile?.Nickname}↔{botB.Profile?.Nickname} failed: {ex.Message}"
+                    );
+                }
+            }
+        }
+
+        if (YellowFlareCursePlugin.Debug.Value)
+        {
+            ModLogger.Info(
+                $"AI alliance refresh: bots={bots.Count}, newAllies={allyLinks}, clearedEnemies={clearedEnemies}."
+            );
+        }
+
+        return allyLinks;
+    }
+
     private int ApplyCurseSnapshot(bool initial)
     {
         if (_gameWorld == null)
@@ -352,7 +554,6 @@ public class CurseEventComponent : MonoBehaviour
                 continue;
             }
 
-            // Pause QuestingBots objectives so PMC/PScav layers don't keep pathing to quests.
             if (QuestingBotsCurseBridge.StopQuesting(botOwner))
             {
                 qbStops++;
@@ -362,14 +563,10 @@ public class CurseEventComponent : MonoBehaviour
             {
                 try
                 {
-                    // Hostility mark (not enough alone — especially with SAIN).
                     group.AddEnemy(target, EBotEnemyCause.addPlayer);
-
-                    // Give bots a last-known position so they path / hunt.
                     group.ReportAboutEnemy(target, EEnemyPartVisibleType.Visible, botOwner);
                     group.CalcGoalForBot(botOwner);
 
-                    // SAIN overrides ShallKnowEnemy — force a known place.
                     if (SainCurseBridge.NotifySeen(botOwner, target))
                     {
                         sainHits++;
@@ -400,6 +597,33 @@ public class CurseEventComponent : MonoBehaviour
         }
 
         return cursedBots;
+    }
+
+    private static List<Player> CollectEligibleBotPlayers(GameWorld gameWorld)
+    {
+        var list = new List<Player>();
+        foreach (var botPlayer in gameWorld.AllAlivePlayersList)
+        {
+            if (botPlayer == null || !botPlayer.IsAI || !botPlayer.HealthController.IsAlive)
+            {
+                continue;
+            }
+
+            var botOwner = botPlayer.AIData?.BotOwner;
+            if (botOwner == null || botOwner.BotState != EBotState.Active)
+            {
+                continue;
+            }
+
+            if (!IsEligibleRole(botOwner))
+            {
+                continue;
+            }
+
+            list.Add(botPlayer);
+        }
+
+        return list;
     }
 
     private static List<IPlayer> CollectCurseTargets(GameWorld gameWorld)
@@ -438,6 +662,18 @@ public class CurseEventComponent : MonoBehaviour
         }
 
         return targets;
+    }
+
+    private static bool TryFindNavMesh(Vector3 around, out Vector3 position)
+    {
+        if (NavMesh.SamplePosition(around, out var hit, NavMeshSampleRadius, NavMesh.AllAreas))
+        {
+            position = hit.position;
+            return true;
+        }
+
+        position = around;
+        return false;
     }
 
     private static bool IsEligibleRole(BotOwner bot)

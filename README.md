@@ -1,8 +1,8 @@
 # Yellow Flare Curse
 
-**SPT 4.0.13 / 4.1.x** · **v1.2.0**
+**SPT 4.0.13 / 4.1.x** · **v1.3.0**
 
-Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs and PMC bots aggro you (and your group), then after a delay an airdrop lands near the flare with **forced high-value loot**.
+Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs and PMC bots are pulled near you, stop fighting each other, hunt you (and your group), then after a delay an airdrop lands near the flare with **forced high-value loot**.
 
 [Latest release](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases/latest) · [License: MIT](LICENSE)
 
@@ -12,10 +12,12 @@ Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs 
   - Item in inventory: `624c0b3340357b5f566e8766`  
   - Ammo id reported on success: `624c09e49b98e019a3315b66` (`patron_rsp_yellow`)
 - **One event per raid**
+- **Teleport** eligible scav/PMC AI near the player on curse start (host/authority; NavMesh ring)
+- **AI alliance** during curse — bots do not fight each other; they only hunt players
 - Curse: eligible scav/PMC bots get `AddEnemy` + last-known position (`ReportAboutEnemy` / `CalcGoalForBot`)
 - **SAIN-aware** (optional): sets known place so bots actually hunt under SAIN (`EnemyKnown`)
 - **QuestingBots-aware** (optional): calls `StopQuesting` on cursed bots so PMC/PScavs leave quest paths
-- Bosses / followers / sectants / rogues are **not** cursed
+- Bosses / followers / sectants / rogues are **not** cursed (no boss spawn in 1.3.0)
 - Curse **refreshes every 5s** while the event is active (covers new spawns)
 - After the delay, airdrop at the **nearest `AirdropPoint`** to the flare
 - Forced high-value crate (bitcoins, LEDX, GPUs, intel, cases, keycards, top ammo, money) — **not** random Common/«общей поддержки»
@@ -25,7 +27,7 @@ Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs 
 
 ## Install
 
-1. Download `YellowFlareCurse-1.2.0.zip` from [Releases](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases)
+1. Download `YellowFlareCurse-1.3.0.zip` from [Releases](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases)
 2. Extract into your **SPT game root** (folder with `SPT.Server.exe` / `user/`)
 3. Restart the SPT **server** and the **game client**
 
@@ -35,14 +37,11 @@ user/mods/YellowFlareCurse/config.json
 BepInEx/plugins/YellowFlareCurse.Client.dll
 ```
 
-## Changelog (1.2.0)
+## Changelog (1.3.0)
 
-- Fix yellow flare detection (ammo tpl vs weapon tpl)
-- Stronger bot hunt (report position + SAIN known place + refresh)
-- Forced loot profile via Supply-style mapping (not mixed/Common)
-- Richer default ForcedLoot table
-- Multi-sink logging (file / console / server)
-- Bottom-right overlay; auto-hide after airdrop
+- Teleport eligible AI near the player on curse start
+- AI alliance during curse (player-only hunt)
+- F12 toggles for teleport radius / alliance
 
 ## Logging
 
@@ -74,6 +73,10 @@ Edit `user/mods/YellowFlareCurse/config.json`:
 | AirdropDelaySeconds | 600 | Delay before the airdrop |
 | ShowCountdown | true | Banner + countdown (bottom-right) |
 | IncludePlayerGroup | true | Also mark teammates as enemies for cursed bots |
+| TeleportBotsNearPlayer | true | Pull eligible AI near you on curse start |
+| TeleportMinRadius | 15 | Min ring radius (m) |
+| TeleportMaxRadius | 40 | Max ring radius (m) |
+| AiAlliance | true | AI stop fighting each other during curse |
 | Debug | false | Verbose logging |
 
 ## Compatibility

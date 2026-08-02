@@ -20,7 +20,7 @@ public record ModMetadata : IModMetadata
     public string Name { get; init; } = "Yellow Flare Curse";
     public string Author { get; init; } = "gadjed";
     public List<string>? Contributors { get; init; } = null;
-    public SemanticVersioning.Version Version { get; init; } = new("1.2.2");
+    public SemanticVersioning.Version Version { get; init; } = new("1.3.0");
     public SemanticVersioning.Range SptVersion { get; init; } = new(">=4.0.0 <4.2.0");
     public bool HasPrepatcher { get; init; } = false;
     public List<string>? Incompatibilities { get; init; } = null;
@@ -99,7 +99,7 @@ public class YellowFlareCurseMod(
         patchManager.EnablePatches();
 
         fileLog.Success(
-            $"{Tag} Loaded v1.2.2. Container={CurseContainerId}, Type={CurseAirdropType}, "
+            $"{Tag} Loaded v1.3.0. Container={CurseContainerId}, Type={CurseAirdropType}, "
                 + $"ForcedLoot={ForcedLoot.Count}, crate=SUPPLY/техобеспечения. "
                 + $"FileLog={fileLog.LogFilePath}"
         );
