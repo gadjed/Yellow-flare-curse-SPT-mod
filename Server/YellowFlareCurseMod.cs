@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using SPTarkov.Common.Models.Logging;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Reflection.Patching;
@@ -19,7 +19,7 @@ public record ModMetadata : IModMetadata
     public string Name { get; init; } = "Yellow Flare Curse";
     public string Author { get; init; } = "gadjed";
     public List<string>? Contributors { get; init; } = null;
-    public SemanticVersioning.Version Version { get; init; } = new("1.1.0");
+    public SemanticVersioning.Version Version { get; init; } = new("1.1.1");
     public SemanticVersioning.Range SptVersion { get; init; } = new("~4.1.0");
     public bool HasPrepatcher { get; init; } = false;
     public List<string>? Incompatibilities { get; init; } = null;
@@ -80,8 +80,10 @@ public class YellowFlareCurseMod(
             logger.Warning($"{Tag} Could not resolve mixed airdrop loot profile; forced loot patch may no-op.");
         }
 
+        // EnablePatch() requires _harmony already; create it via EnablePatches().
         patchManager.PatcherName = "YellowFlareCurse";
-        patchManager.EnablePatch(new CurseAirdropLootPatch());
+        patchManager.AddPatch(new CurseAirdropLootPatch());
+        patchManager.EnablePatches();
 
         logger.Success(
             $"{Tag} Loaded. Container={CurseContainerId}, ForcedLoot entries={ForcedLoot.Count}, "
