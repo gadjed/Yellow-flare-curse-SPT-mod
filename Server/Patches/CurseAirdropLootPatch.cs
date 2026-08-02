@@ -1,14 +1,19 @@
 using System.Reflection;
 using HarmonyLib;
 using SPTarkov.Reflection.Patching;
+using SPTarkov.Server.Core.Generators.Loot;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
 using SPTarkov.Server.Core.Models.Eft.Location;
+using SPTarkov.Server.Core.Models.Enums;
 using SPTarkov.Server.Core.Services.InRaid;
 
 namespace YellowFlareCurse.Patches;
 
 /// <summary>
-/// Safety net: when the client requests loot for the curse container, ensure UseForcedLoot is on.
-/// Primary setup is done at load by rewriting the toiletPaper profile + CustomAirdropMapping.
+/// Fully replaces curse-container loot generation.
+/// toiletPaper/mixed both resolve to COMMON crate («Ящик общей поддержки») in GetAirdropCrateItem —
+/// so we build the response ourselves with SUPPLY crate («Ящик техобеспечения») + ForcedLoot.
 /// </summary>
 public class CurseAirdropLootPatch : AbstractPatch
 {
@@ -18,44 +23,90 @@ public class CurseAirdropLootPatch : AbstractPatch
     }
 
     [PatchPrefix]
-    public static void Prefix(GetAirdropLootRequest request)
+    public static bool Prefix(GetAirdropLootRequest request, ref GetAirdropLootResponse __result)
     {
         var log = ModFileLogger.Instance;
         var container = request?.ContainerId.ToString() ?? "<null>";
-        log?.Info($"{YellowFlareCurseMod.Tag} GenerateCustomAirdropLoot. ContainerId={container}.");
+        var empty = request?.ContainerId.IsEmpty == true;
+        log?.Info($"{YellowFlareCurseMod.Tag} GenerateCustomAirdropLoot. ContainerId={container}, empty={empty}.");
 
-        if (request is null || !IsCurseContainer(container))
+        if (request is null || empty || !IsCurseContainer(container))
         {
             log?.Info(
                 $"{YellowFlareCurseMod.Tag} Not curse container (want={YellowFlareCurseMod.CurseContainerIdString}) — pass-through."
             );
-            return;
+            return true; // run original
         }
 
-        var loot = YellowFlareCurseMod.CurseLootProfile;
-        if (loot is null)
+        var lootGen = YellowFlareCurseMod.LootGenerator;
+        if (lootGen is null)
         {
-            log?.Warning($"{YellowFlareCurseMod.Tag} CurseLootProfile is null — cannot force loot.");
-            return;
+            log?.Error($"{YellowFlareCurseMod.Tag} LootGenerator is null — cannot build curse loot.");
+            return true;
         }
 
         if (YellowFlareCurseMod.ForcedLoot.Count == 0)
         {
-            log?.Warning($"{YellowFlareCurseMod.Tag} Curse container matched but ForcedLoot is empty.");
-            return;
+            log?.Warning($"{YellowFlareCurseMod.Tag} ForcedLoot empty — pass-through.");
+            return true;
         }
 
-        loot.UseForcedLoot = true;
-        loot.ForcedLoot = YellowFlareCurseMod.ForcedLoot;
-        loot.WeaponPresetCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
-        loot.ArmorPresetCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
-        loot.ItemCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
-        loot.WeaponCrateCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
+        try
+        {
+            __result = BuildCurseAirdrop(lootGen);
+            var itemCount = __result.Container?.Count() ?? 0;
+            log?.Success(
+                $"{YellowFlareCurseMod.Tag} Built curse airdrop: icon={__result.Icon}, "
+                    + $"items={itemCount}, forcedEntries={YellowFlareCurseMod.ForcedLoot.Count}, "
+                    + $"crate=LOOTCONTAINER_AIRDROP_SUPPLY_CRATE (техобеспечения)."
+            );
+            return false; // skip original
+        }
+        catch (Exception ex)
+        {
+            log?.Error($"{YellowFlareCurseMod.Tag} Failed to build curse airdrop: {ex}");
+            return true;
+        }
+    }
 
-        log?.Success(
-            $"{YellowFlareCurseMod.Tag} Forcing curse loot on {container} "
-                + $"({YellowFlareCurseMod.ForcedLoot.Count} entries, type={YellowFlareCurseMod.CurseAirdropType})."
-        );
+    private static GetAirdropLootResponse BuildCurseAirdrop(LootGenerator lootGenerator)
+    {
+        var crateId = new MongoId();
+        var crate = new Item
+        {
+            Id = crateId,
+            // NOT common/«общей поддержки» — that is LOOTCONTAINER_AIRDROP_COMMON_SUPPLY_CRATE.
+            Template = ItemTpl.LOOTCONTAINER_AIRDROP_SUPPLY_CRATE,
+            Upd = new Upd { SpawnedInSession = true, StackObjectsCount = 1 },
+        };
+
+        var forcedStacks = lootGenerator.CreateForcedLoot(YellowFlareCurseMod.ForcedLoot);
+        var containerItems = new List<Item> { crate };
+
+        foreach (var stack in forcedStacks)
+        {
+            if (stack == null || stack.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var item in stack)
+            {
+                if (string.IsNullOrEmpty(item.ParentId))
+                {
+                    item.ParentId = crateId;
+                    item.SlotId = "main";
+                }
+
+                containerItems.Add(item);
+            }
+        }
+
+        return new GetAirdropLootResponse
+        {
+            Icon = AirdropTypeEnum.Supply,
+            Container = containerItems,
+        };
     }
 
     private static bool IsCurseContainer(string container)

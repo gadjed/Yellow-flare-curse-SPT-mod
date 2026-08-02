@@ -9,7 +9,7 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "gadjed.yellowflarecurse";
     public const string PluginName = "Yellow Flare Curse";
-    public const string PluginVersion = "1.2.0";
+    public const string PluginVersion = "1.2.1";
 
     /// <summary>
     /// Ammo template fired by RSP-30 Yellow (HandleFlareSuccessEvent receives ammo, not the handheld weapon id).

@@ -13,68 +13,149 @@ namespace YellowFlareCurse.Client;
 internal static class SainCurseBridge
 {
     private static bool _resolved;
-    private static MethodInfo? _getSain;
+    private static bool _sainPresent;
+    private static Type? _botComponentType;
+    private static MethodInfo? _getSainByProfileId;
+    private static MethodInfo? _getSainByBotOwner;
+    private static object? _botManagerInstance;
 
-    public static void NotifySeen(BotOwner botOwner, IPlayer target)
+    public static bool IsReady => _sainPresent;
+
+    /// <returns>True if SAIN enemy was marked known.</returns>
+    public static bool NotifySeen(BotOwner botOwner, IPlayer target)
     {
         if (botOwner == null || target == null)
         {
-            return;
+            return false;
         }
 
         try
         {
             Resolve();
-            if (_getSain == null)
+            if (!_sainPresent)
             {
-                return;
+                return false;
             }
 
-            var profileId = botOwner.ProfileId;
-            if (string.IsNullOrEmpty(profileId))
+            var sain = ResolveBotComponent(botOwner);
+            if (sain == null)
             {
-                profileId = botOwner.Profile?.Id;
+                return false;
             }
 
-            if (string.IsNullOrEmpty(profileId))
-            {
-                return;
-            }
-
-            var args = new object?[] { profileId, null };
-            if (_getSain.Invoke(null, args) is not true || args[1] == null)
-            {
-                return;
-            }
-
-            var sain = args[1]!;
             var enemyController = sain.GetType().GetProperty("EnemyController")?.GetValue(sain);
             if (enemyController == null)
             {
-                return;
+                return false;
             }
 
             var checkAdd = enemyController.GetType().GetMethod("CheckAddEnemy", new[] { typeof(IPlayer) });
             var enemy = checkAdd?.Invoke(enemyController, new object[] { target });
             if (enemy == null)
             {
-                return;
+                return false;
             }
 
             var knownPlaces = enemy.GetType().GetProperty("KnownPlaces")?.GetValue(enemy);
             if (knownPlaces == null)
             {
-                return;
+                return false;
             }
 
             var update = knownPlaces
                 .GetType()
                 .GetMethod("UpdateSeenPlace", new[] { typeof(Vector3), typeof(float) });
-            update?.Invoke(knownPlaces, new object[] { target.Position, Time.time });
+            if (update == null)
+            {
+                return false;
+            }
+
+            update.Invoke(knownPlaces, new object[] { target.Position, Time.time });
+            return true;
         }
         catch (Exception ex)
         {
             ModLogger.Debug($"SAIN bridge failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static object? ResolveBotComponent(BotOwner botOwner)
+    {
+        // 1) Direct component on BotOwner / its GameObject (most reliable).
+        if (_botComponentType != null)
+        {
+            var onOwner = botOwner.GetComponent(_botComponentType);
+            if (onOwner != null)
+            {
+                return onOwner;
+            }
+
+            if (botOwner.gameObject != null)
+            {
+                var onGo = botOwner.gameObject.GetComponent(_botComponentType);
+                if (onGo != null)
+                {
+                    return onGo;
+                }
+            }
+        }
+
+        // 2) BotManagerComponent.GetSAIN(BotOwner, out BotComponent)
+        if (_getSainByBotOwner != null)
+        {
+            RefreshBotManagerInstance();
+            if (_botManagerInstance != null)
+            {
+                var args = new object?[] { botOwner, null };
+                if (_getSainByBotOwner.Invoke(_botManagerInstance, args) is true && args[1] != null)
+                {
+                    return args[1];
+                }
+            }
+        }
+
+        // 3) SAINEnableClass.GetSAIN(profileId, out)
+        if (_getSainByProfileId != null)
+        {
+            var profileId = botOwner.ProfileId;
+            if (string.IsNullOrEmpty(profileId))
+            {
+                profileId = botOwner.Profile?.Id;
+            }
+
+            if (!string.IsNullOrEmpty(profileId))
+            {
+                var args = new object?[] { profileId, null };
+                if (_getSainByProfileId.Invoke(null, args) is true && args[1] != null)
+                {
+                    return args[1];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static void RefreshBotManagerInstance()
+    {
+        if (_botManagerInstance != null || _getSainByBotOwner == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var declaring = _getSainByBotOwner.DeclaringType;
+            var instanceProp = declaring?.GetProperty(
+                "Instance",
+                BindingFlags.Public | BindingFlags.Static
+            );
+            _botManagerInstance = instanceProp?.GetValue(null);
+        }
+        catch
+        {
+            _botManagerInstance = null;
         }
     }
 
@@ -89,28 +170,76 @@ internal static class SainCurseBridge
 
         try
         {
-            var type =
-                Type.GetType("SAIN.Plugin.SAINEnableClass, SAIN", throwOnError: false)
-                ?? AppDomain.CurrentDomain
-                    .GetAssemblies()
-                    .Select(a => a.GetType("SAIN.Plugin.SAINEnableClass", throwOnError: false))
-                    .FirstOrDefault(t => t != null);
+            // Real type lives in namespace SAIN (NOT SAIN.Plugin).
+            var enableType =
+                FindType("SAIN.SAINEnableClass")
+                ?? FindType("SAIN.Plugin.SAINEnableClass");
 
-            _getSain = type
-                ?.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .FirstOrDefault(m =>
-                    m.Name == "GetSAIN"
-                    && m.GetParameters().Length == 2
-                    && m.GetParameters()[0].ParameterType == typeof(string)
-                    && m.GetParameters()[1].ParameterType.IsByRef
-                );
+            _botComponentType =
+                FindType("SAIN.Components.BotComponent")
+                ?? FindType("SAIN.SAINComponent.BotComponent");
 
-            ModLogger.Info(_getSain != null ? "SAIN bridge ready." : "SAIN not found — using vanilla aggro only.");
+            var managerType = FindType("SAIN.Components.BotManagerComponent");
+
+            if (enableType != null)
+            {
+                _getSainByProfileId = enableType
+                    .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m =>
+                        m.Name == "GetSAIN"
+                        && m.GetParameters().Length == 2
+                        && m.GetParameters()[0].ParameterType == typeof(string)
+                        && m.GetParameters()[1].ParameterType.IsByRef
+                    );
+            }
+
+            if (managerType != null)
+            {
+                _getSainByBotOwner = managerType
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m =>
+                        m.Name == "GetSAIN"
+                        && m.GetParameters().Length == 2
+                        && typeof(BotOwner).IsAssignableFrom(m.GetParameters()[0].ParameterType)
+                        && m.GetParameters()[1].ParameterType.IsByRef
+                    );
+            }
+
+            _sainPresent = _botComponentType != null || _getSainByProfileId != null || _getSainByBotOwner != null;
+            ModLogger.Info(
+                _sainPresent
+                    ? $"SAIN bridge ready (component={_botComponentType != null}, byOwner={_getSainByBotOwner != null}, byProfile={_getSainByProfileId != null})."
+                    : "SAIN not found — using vanilla aggro only."
+            );
         }
         catch (Exception ex)
         {
-            ModLogger.Debug($"SAIN resolve failed: {ex.Message}");
-            _getSain = null;
+            ModLogger.Warning($"SAIN resolve failed: {ex.Message}");
+            _sainPresent = false;
         }
+    }
+
+    private static Type? FindType(string fullName)
+    {
+        var asmQualified = Type.GetType(fullName + ", SAIN", throwOnError: false);
+        if (asmQualified != null)
+        {
+            return asmQualified;
+        }
+
+        return AppDomain.CurrentDomain
+            .GetAssemblies()
+            .Select(a =>
+            {
+                try
+                {
+                    return a.GetType(fullName, throwOnError: false);
+                }
+                catch
+                {
+                    return null;
+                }
+            })
+            .FirstOrDefault(t => t != null);
     }
 }

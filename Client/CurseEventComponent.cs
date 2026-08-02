@@ -322,6 +322,8 @@ public class CurseEventComponent : MonoBehaviour
         var cursedBots = 0;
         var scannedBots = 0;
         var skippedRole = 0;
+        var sainHits = 0;
+        var qbStops = 0;
 
         foreach (var botPlayer in _gameWorld.AllAlivePlayersList)
         {
@@ -350,6 +352,12 @@ public class CurseEventComponent : MonoBehaviour
                 continue;
             }
 
+            // Pause QuestingBots objectives so PMC/PScav layers don't keep pathing to quests.
+            if (QuestingBotsCurseBridge.StopQuesting(botOwner))
+            {
+                qbStops++;
+            }
+
             foreach (var target in targets)
             {
                 try
@@ -362,7 +370,10 @@ public class CurseEventComponent : MonoBehaviour
                     group.CalcGoalForBot(botOwner);
 
                     // SAIN overrides ShallKnowEnemy — force a known place.
-                    SainCurseBridge.NotifySeen(botOwner, target);
+                    if (SainCurseBridge.NotifySeen(botOwner, target))
+                    {
+                        sainHits++;
+                    }
                 }
                 catch (System.Exception ex)
                 {
@@ -383,7 +394,8 @@ public class CurseEventComponent : MonoBehaviour
         {
             ModLogger.Info(
                 $"Curse snapshot{(initial ? "" : " refresh")}: AliveAI={scannedBots}, "
-                    + $"skippedRole={skippedRole}, cursedBots={cursedBots}, targets={targets.Count}."
+                    + $"skippedRole={skippedRole}, cursedBots={cursedBots}, targets={targets.Count}, "
+                    + $"sainKnown={sainHits}, qbStop={qbStops}."
             );
         }
 

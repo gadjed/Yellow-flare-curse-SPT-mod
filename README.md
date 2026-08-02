@@ -13,7 +13,8 @@ Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs 
   - Ammo id reported on success: `624c09e49b98e019a3315b66` (`patron_rsp_yellow`)
 - **One event per raid**
 - Curse: eligible scav/PMC bots get `AddEnemy` + last-known position (`ReportAboutEnemy` / `CalcGoalForBot`)
-- **SAIN-aware** (optional): sets known place so bots actually hunt under SAIN
+- **SAIN-aware** (optional): sets known place so bots actually hunt under SAIN (`EnemyKnown`)
+- **QuestingBots-aware** (optional): calls `StopQuesting` on cursed bots so PMC/PScavs leave quest paths
 - Bosses / followers / sectants / rogues are **not** cursed
 - Curse **refreshes every 5s** while the event is active (covers new spawns)
 - After the delay, airdrop at the **nearest `AirdropPoint`** to the flare
