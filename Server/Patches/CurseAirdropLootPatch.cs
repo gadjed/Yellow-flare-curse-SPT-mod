@@ -39,6 +39,9 @@ public class CurseAirdropLootPatch : AbstractPatch
         loot.UseForcedLoot = true;
         loot.ForcedLoot = YellowFlareCurseMod.ForcedLoot;
         _active = true;
+        ModFileLogger.Instance?.Info(
+            $"{YellowFlareCurseMod.Tag} Forcing curse loot for container {request.ContainerId}."
+        );
     }
 
     [PatchPostfix]

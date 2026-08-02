@@ -5,7 +5,7 @@
     <AssemblyName>YellowFlareCurse</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.0.0</Version>
+    <Version>1.4.4</Version>
     <Authors>gadjed</Authors>
   </PropertyGroup>
 
@@ -32,5 +32,7 @@
     <MakeDir Directories="$(ProjectDir)../Build/SPT/user/mods/YellowFlareCurse" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ProjectDir)../Build/SPT/user/mods/YellowFlareCurse" />
     <Copy SourceFiles="$(ProjectDir)config.json" DestinationFolder="$(ProjectDir)../Build/SPT/user/mods/YellowFlareCurse" />
+    <Copy SourceFiles="$(ProjectDir)../LICENSE" DestinationFolder="$(ProjectDir)../Build/SPT/user/mods/YellowFlareCurse" Condition="Exists('$(ProjectDir)../LICENSE')" />
+    <Copy SourceFiles="$(ProjectDir)../README.md" DestinationFolder="$(ProjectDir)../Build/SPT/user/mods/YellowFlareCurse" Condition="Exists('$(ProjectDir)../README.md')" />
   </Target>
 </Project>

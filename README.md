@@ -1,75 +1,105 @@
 # Yellow Flare Curse
 
-**SPT 4.0.13 Compatible**
+**SPT 4.0.13** · **v1.4.4**
 
-Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs and PMC bots already on the map aggro you (and your group), then after **10 minutes** an airdrop lands at the nearest airdrop point with high-value loot.
-
-Developed and tested against **SPT 4.0.13**.
+Firing a successful **RSP-30 Yellow** flare starts a once-per-raid curse: scavs and PMC bots are pulled near you, stop fighting each other, hunt you (and your group), **Tagilla** is spawned nearby, then after a delay an airdrop lands near the flare with **forced high-value loot** (when the map supports airdrops).
 
 [Latest release](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases/latest) · [License: MIT](LICENSE)
 
 ## Features
 
-- Trigger: vanilla **RSP-30 Yellow** only (not Special Yellow / red airdrop flares)
+- Trigger: vanilla **RSP-30 Yellow** handheld  
+  - Item in inventory: `624c0b3340357b5f566e8766`  
+  - Ammo id reported on success: `624c09e49b98e019a3315b66` (`patron_rsp_yellow`)
 - **One event per raid**
-- Curse snapshot: existing scav + PMC bots become hostile to you and your group
-- Bosses / followers / sectants / rogues are **not** cursed
-- Newly spawned bots (e.g. from Scav Population) stay uncursed
-- After the delay, airdrop at the **nearest `AirdropPoint`** to the flare
-- High-value crate loot (bitcoins, LEDX, military electronics, money, top ammo) via server config
-- On-screen countdown (toggle in F12)
-- Maps without airdrop points: event does not start
+- **Tagilla** spawn on curse start (host/authority), placed near the player
+- **Teleport** eligible scav/PMC AI near the player on curse start (host/authority; NavMesh ring, never onto the player)
+- **AI alliance** during curse — bots do not fight each other; they only hunt players
+- Curse: eligible scav/PMC bots (+ Tagilla) get `AddEnemy` + last-known position (`ReportAboutEnemy` / `CalcGoalForBot`)
+- **SAIN-aware** (optional): seen place + dangerous gunshot so bots hunt under SAIN
+- **QuestingBots-aware** (optional): calls `StopQuesting` on cursed bots so PMC/PScavs leave quest paths
+- Other bosses / sectants / rogues are **not** cursed
+- Curse **refreshes every 5s** while the event is active (covers new spawns)
+- After the delay, airdrop at the **nearest `AirdropPoint`** to the flare (if the map has any)
+- Maps **without airdrop points**: curse + Tagilla still run; airdrop is skipped
+- Forced high-value crate (bitcoins, LEDX, GPUs, intel, cases, keycards, top ammo, money) — **not** random Common/«общей поддержки»
+- Bottom-right **start banner + countdown**; overlay **hides ~5s after airdrop** (or after the start banner when there is no airdrop)
+- Logging: BepInEx / Unity / SPT server console + dedicated log files
 
 ## Install
 
-1. Download `YellowFlareCurse-*.zip` from [Releases](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases)
-2. Extract into your **SPT game root** (folder with `SPT.Server.exe` / `user/`)
-3. Restart the SPT server **and** the game client
-
-Paths inside the zip:
+1. Download `YellowFlareCurse-1.4.4.zip` from [Releases](https://github.com/gadjed/Yellow-flare-curse-SPT-mod/releases)
+2. Extract into your **SPT game root** (folder with `EscapeFromTarkov.exe` / `SPT/`)
+3. Restart the SPT **server** and the **game client**
 
 ```text
-user/mods/YellowFlareCurse/YellowFlareCurse.dll
-user/mods/YellowFlareCurse/config.json
+SPT/user/mods/YellowFlareCurse/YellowFlareCurse.dll
+SPT/user/mods/YellowFlareCurse/config.json
 BepInEx/plugins/YellowFlareCurse.Client.dll
 ```
 
+## Changelog (1.4.4)
+
+- Stronger scav/PMC hunt after teleport (SAIN seen + dangerous gunshot)
+- Tagilla aggro retries until BotOwner Active
+- Teleport ring no longer dumps bots onto the player
+
+## Logging
+
+| Where | Path / sink |
+|-------|-------------|
+| Client file | `BepInEx/plugins/YellowFlareCurse/logs/yellowflarecurse-*.log` |
+| Client console | BepInEx `LogOutput.log` + Unity player log |
+| Server console | SPT server window / `user/logs/spt/` |
+| Server file | `user/mods/YellowFlareCurse/logs/yellowflarecurse-server-*.log` |
+
+F12 **Debug** logs every flare success with template id.
+
 ## Config (server)
 
-Edit `user/mods/YellowFlareCurse/config.json`:
+Edit `SPT/user/mods/YellowFlareCurse/config.json`:
 
 | Key | Description |
 |-----|-------------|
 | `Enabled` | Master toggle for server loot mapping |
 | `AirdropDelaySeconds` | Hint only — live delay is the client F12 value |
-| `CurseContainerId` | Synthetic container id used for custom loot (must match client constant) |
-| `ForcedLoot` | Template id → `{ "Min", "Max" }` stack ranges packed into the curse crate |
+| `CurseContainerId` | Synthetic container id (must match client constant) |
+| `ForcedLoot` | Template id → `{ "Min", "Max" }` stacks packed into the curse crate |
 
 ## Config (client / F12)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Enabled | true | Master toggle |
-| AirdropDelaySeconds | 600 | Delay before the airdrop |
-| ShowCountdown | true | On-screen MM:SS countdown |
+| AirdropDelaySeconds | 600 | Delay before the airdrop (ignored when map has no points) |
+| ShowCountdown | true | Banner + countdown (bottom-right) |
 | IncludePlayerGroup | true | Also mark teammates as enemies for cursed bots |
+| TeleportBotsNearPlayer | true | Pull eligible AI near you on curse start |
+| TeleportMinRadius | 100 | Min ring radius (m) |
+| TeleportMaxRadius | 150 | Max ring radius (m) |
+| AiAlliance | true | AI stop fighting each other during curse |
+| SpawnTagilla | true | Spawn Tagilla on curse start |
+| TagillaType | Factory | `Factory` (`bossTagilla`) or `Labyrinth` (`bossTagillaAgro`) |
+| TagillaSpawnMinRadius | 60 | Min Tagilla placement ring (m) |
+| TagillaSpawnMaxRadius | 75 | Max Tagilla placement ring (m) |
 | Debug | false | Verbose logging |
 
 ## Compatibility
 
-- Designed to work alongside **Scav Population** (new waves are not auto-cursed)
-- **SAIN** optional — cursed bots fight more aggressively if SAIN is installed
-- Requires maps that have vanilla airdrop points
+- **Scav Population** — new waves get cursed on the refresh timer
+- **SAIN** optional — recommended for aggressive hunting
+- **Fika** — host must fire the flare (`IsYourPlayer`); client `InitAirdrop` / Tagilla spawn are host-only
+- Indoor / special maps without airdrop points still get the hunt + Tagilla
 
 ## Build from source
 
-Requires **.NET 9** SDK. Client needs hollowed refs under `Client/References/` (see that folder's README).
+Requires **.NET 9/10** SDK. Client needs hollowed refs under `Client/References/` (see that folder's README).
 
 ```bash
 dotnet build YellowFlareCurse.sln -c Release
 ```
 
-Output is copied to `Build/SPT/`.
+Output is copied to `Build/SPT/` and `Build/BepInEx/` (Forge-ready layout).
 
 ## License
 

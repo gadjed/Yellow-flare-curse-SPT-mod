@@ -20,8 +20,8 @@ public record ModMetadata : AbstractModMetadata
     public override string Name { get; init; } = "Yellow Flare Curse";
     public override string Author { get; init; } = "gadjed";
     public override List<string>? Contributors { get; init; } = null;
-    public override SemanticVersioning.Version Version { get; init; } = new("1.0.1");
-    public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.4.4");
+    public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.13");
     public override List<string>? Incompatibilities { get; init; } = null;
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = null;
     public override string? Url { get; init; } = "https://github.com/gadjed/Yellow-flare-curse-SPT-mod";
@@ -47,20 +47,31 @@ public class YellowFlareCurseMod(
     public Task OnLoad()
     {
         var pathToMod = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
+        var fileLog = new ModFileLogger(
+            pathToMod,
+            msg => logger.Info(msg),
+            msg => logger.Warning(msg),
+            msg => logger.Error(msg),
+            msg => logger.Success(msg)
+        );
+        ModFileLogger.Instance = fileLog;
+
         var configPath = Path.Combine(pathToMod, "config.json");
         Config = File.Exists(configPath)
             ? modHelper.GetJsonDataFromFile<ModConfig>(pathToMod, "config.json")
             : new ModConfig();
 
+        fileLog.Info($"{Tag} Config loaded from {(File.Exists(configPath) ? configPath : "defaults")}.");
+
         if (!Config.Enabled)
         {
-            logger.Warning($"{Tag} Disabled via config.");
+            fileLog.Warning($"{Tag} Disabled via config.");
             return Task.CompletedTask;
         }
 
         if (string.IsNullOrWhiteSpace(Config.CurseContainerId) || Config.CurseContainerId.Length != 24)
         {
-            logger.Error($"{Tag} Invalid CurseContainerId; expected 24-char MongoId.");
+            fileLog.Error($"{Tag} Invalid CurseContainerId; expected 24-char MongoId.");
             return Task.CompletedTask;
         }
 
@@ -79,16 +90,16 @@ public class YellowFlareCurseMod(
         }
         else
         {
-            logger.Warning($"{Tag} Could not resolve mixed airdrop loot profile; forced loot patch may no-op.");
+            fileLog.Warning($"{Tag} Could not resolve mixed airdrop loot profile; forced loot patch may no-op.");
         }
 
         patchManager.PatcherName = "YellowFlareCurse";
         patchManager.AddPatch(new CurseAirdropLootPatch());
         patchManager.EnablePatches();
 
-        logger.Success(
-            $"{Tag} Loaded. Container={CurseContainerId}, ForcedLoot entries={ForcedLoot.Count}, "
-                + $"DelayHint={Config.AirdropDelaySeconds}s."
+        fileLog.Success(
+            $"{Tag} Loaded v1.4.4. Container={CurseContainerId}, ForcedLoot={ForcedLoot.Count}, "
+                + $"FileLog={fileLog.LogFilePath}"
         );
 
         return Task.CompletedTask;

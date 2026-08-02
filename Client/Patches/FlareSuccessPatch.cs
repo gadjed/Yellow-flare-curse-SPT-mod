@@ -22,33 +22,51 @@ public class FlareSuccessPatch : ModulePatch
     [PatchPostfix]
     public static void PatchPostfix(Player __instance, Vector3 position, AmmoTemplate ammoTemplate)
     {
+        if (__instance == null)
+        {
+            ModLogger.Debug("FlareSuccess: instance null.");
+            return;
+        }
+
+        var isYours = __instance.IsYourPlayer;
+        var templateId = ammoTemplate?._id ?? "<null>";
+        var nickname = __instance.Profile?.Nickname ?? "?";
+
+        ModLogger.Debug(
+            $"FlareSuccess fired. player={nickname}, IsYourPlayer={isYours}, tpl={templateId}, pos={position}."
+        );
+
         if (!YellowFlareCursePlugin.Enabled.Value)
         {
+            ModLogger.Info("FlareSuccess ignored — mod Enabled=false.");
             return;
         }
 
-        if (__instance == null || !__instance.IsYourPlayer)
+        if (!isYours)
         {
+            ModLogger.Debug("FlareSuccess ignored — not local player.");
             return;
         }
 
-        var templateId = ammoTemplate?._id;
         if (string.IsNullOrEmpty(templateId) || templateId != YellowFlareCursePlugin.YellowFlareTemplateId)
         {
-            if (YellowFlareCursePlugin.Debug.Value)
-            {
-                YellowFlareCursePlugin.Log.LogInfo(
-                    $"[YellowFlareCurse] Ignoring non-yellow flare success (tpl={templateId})."
-                );
-            }
-
+            ModLogger.Info(
+                $"Ignoring non-yellow flare success (ammoTpl={templateId}). "
+                    + $"Need RSP-30 Yellow ammo={YellowFlareCursePlugin.YellowFlareTemplateId} "
+                    + $"(weapon item={YellowFlareCursePlugin.YellowFlareWeaponId})."
+            );
             return;
         }
+
+        ModLogger.Info(
+            $"Yellow RSP-30 success detected at {position} "
+                + $"(ammoTpl={templateId}, weapon={YellowFlareCursePlugin.YellowFlareWeaponId})."
+        );
 
         var component = CurseEventComponent.Instance;
         if (component == null)
         {
-            YellowFlareCursePlugin.Log.LogWarning("[YellowFlareCurse] No raid component; cannot start event.");
+            ModLogger.Warning("No raid component attached; cannot start event.");
             return;
         }
 

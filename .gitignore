@@ -8,3 +8,5 @@ Build/
 Client/References/*.dll
 *.zip
 .DS_Store
+
+Dist/
