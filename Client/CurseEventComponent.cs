@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using Comfort.Common;
 using EFT;
 using EFT.Airdrop;
 using UnityEngine;
@@ -8,15 +7,29 @@ namespace YellowFlareCurse.Client;
 
 public class CurseEventComponent : MonoBehaviour
 {
+    private const float CurseRefreshInterval = 5f;
+
     public static CurseEventComponent? Instance { get; private set; }
 
     private GameWorld? _gameWorld;
     private bool _eventUsed;
     private bool _eventActive;
     private bool _airdropSpawned;
+    private bool _overlayVisible;
     private float _airdropAtTime;
+    private float _announceUntil;
+    private float _overlayHideAt;
+    private float _nextCurseRefresh;
     private Vector3 _flarePosition;
     private string _countdownText = string.Empty;
+    private string _announceTitle = string.Empty;
+    private string _announceSubtitle = string.Empty;
+
+    private GUIStyle? _bannerStyle;
+    private GUIStyle? _bannerSubStyle;
+    private GUIStyle? _countdownStyle;
+    private Texture2D? _bannerBg;
+    private Texture2D? _countdownBg;
 
     public void Init(GameWorld gameWorld)
     {
@@ -25,7 +38,21 @@ public class CurseEventComponent : MonoBehaviour
         _eventUsed = false;
         _eventActive = false;
         _airdropSpawned = false;
+        _overlayVisible = false;
+        _announceUntil = 0f;
+        _overlayHideAt = 0f;
+        _nextCurseRefresh = 0f;
         _countdownText = string.Empty;
+        _announceTitle = string.Empty;
+        _announceSubtitle = string.Empty;
+
+        var location = gameWorld.LocationId ?? "?";
+        var airdropPoints = CountAirdropPoints();
+        ModLogger.Info(
+            $"Raid component ready. Location={location}, AirdropPoints={airdropPoints}, "
+                + $"Enabled={YellowFlareCursePlugin.Enabled.Value}, "
+                + $"Delay={YellowFlareCursePlugin.AirdropDelaySeconds.Value:0}s."
+        );
     }
 
     private void OnDestroy()
@@ -34,54 +61,91 @@ public class CurseEventComponent : MonoBehaviour
         {
             Instance = null;
         }
+
+        if (_bannerBg != null)
+        {
+            Destroy(_bannerBg);
+            _bannerBg = null;
+        }
+
+        if (_countdownBg != null)
+        {
+            Destroy(_countdownBg);
+            _countdownBg = null;
+        }
     }
 
     public void TryStartCurse(Vector3 flarePosition)
     {
         if (!YellowFlareCursePlugin.Enabled.Value)
         {
+            ModLogger.Warning("TryStartCurse ignored — mod Enabled=false.");
             return;
         }
 
         if (_eventUsed)
         {
-            if (YellowFlareCursePlugin.Debug.Value)
-            {
-                YellowFlareCursePlugin.Log.LogInfo("[YellowFlareCurse] Event already used this raid.");
-            }
-
+            ModLogger.Info("Event already used this raid — ignoring second yellow flare.");
             return;
         }
 
         if (_gameWorld == null)
         {
+            ModLogger.Error("TryStartCurse failed — GameWorld is null.");
             return;
         }
 
-        if (!HasAirdropPoints())
+        var pointCount = CountAirdropPoints();
+        if (pointCount <= 0)
         {
-            YellowFlareCursePlugin.Log.LogWarning(
-                "[YellowFlareCurse] No AirdropPoints on this map — event not started."
-            );
+            ModLogger.Warning("No AirdropPoints on this map — event not started.");
             return;
         }
 
         _eventUsed = true;
         _eventActive = true;
         _airdropSpawned = false;
+        _overlayVisible = true;
         _flarePosition = flarePosition;
-        _airdropAtTime = Time.time + YellowFlareCursePlugin.AirdropDelaySeconds.Value;
+        var delay = YellowFlareCursePlugin.AirdropDelaySeconds.Value;
+        _airdropAtTime = Time.time + delay;
+        _announceUntil = Time.time + 8f;
+        _overlayHideAt = 0f;
+        _nextCurseRefresh = Time.time + CurseRefreshInterval;
 
-        var cursed = ApplyCurseSnapshot();
-        YellowFlareCursePlugin.Log.LogInfo(
-            $"[YellowFlareCurse] Curse started at {flarePosition}. Aggroed {cursed} bot group(s). "
-                + $"Airdrop in {YellowFlareCursePlugin.AirdropDelaySeconds.Value:0}s."
+        var minutes = Mathf.FloorToInt(delay / 60f);
+        var seconds = Mathf.FloorToInt(delay % 60f);
+        _announceTitle = "YELLOW FLARE CURSE";
+        _announceSubtitle = $"Scavs & PMCs are hunting you  ·  Airdrop in {minutes:00}:{seconds:00}";
+        _countdownText = $"AIRDROP  {minutes:00}:{seconds:00}";
+
+        var cursed = ApplyCurseSnapshot(initial: true);
+        ModLogger.Info(
+            $"CURSE STARTED at {flarePosition}. Aggroed {cursed} bot(s). "
+                + $"AirdropPoints={pointCount}. Airdrop in {delay:0}s "
+                + $"(container={YellowFlareCursePlugin.CurseContainerId})."
         );
     }
 
     private void Update()
     {
-        if (!_eventActive || _airdropSpawned || _gameWorld == null)
+        if (!_eventActive || _gameWorld == null)
+        {
+            return;
+        }
+
+        if (_overlayVisible && _overlayHideAt > 0f && Time.time >= _overlayHideAt)
+        {
+            HideOverlay();
+        }
+
+        if (Time.time >= _nextCurseRefresh)
+        {
+            _nextCurseRefresh = Time.time + CurseRefreshInterval;
+            ApplyCurseSnapshot(initial: false);
+        }
+
+        if (_airdropSpawned)
         {
             return;
         }
@@ -101,23 +165,95 @@ public class CurseEventComponent : MonoBehaviour
 
     private void OnGUI()
     {
-        if (!_eventActive || !YellowFlareCursePlugin.ShowCountdown.Value || string.IsNullOrEmpty(_countdownText))
+        if (!_overlayVisible || !YellowFlareCursePlugin.ShowCountdown.Value)
         {
             return;
         }
 
-        var style = new GUIStyle(GUI.skin.box)
+        EnsureStyles();
+
+        const float margin = 18f;
+        const float gap = 8f;
+        var countdownWidth = 360f;
+        var countdownHeight = 42f;
+        var bannerWidth = Mathf.Min(420f, Screen.width - margin * 2f);
+        var bannerHeight = 72f;
+
+        var showingAnnounce = Time.time < _announceUntil && !string.IsNullOrEmpty(_announceTitle);
+        var stackHeight = countdownHeight + (showingAnnounce ? bannerHeight + gap : 0f);
+        var stackBottom = Screen.height - margin;
+        var stackTop = stackBottom - stackHeight;
+        var stackRight = Screen.width - margin;
+
+        if (showingAnnounce)
+        {
+            var bannerRect = new Rect(stackRight - bannerWidth, stackTop, bannerWidth, bannerHeight);
+            GUI.Box(bannerRect, GUIContent.none, _bannerStyle);
+            GUI.Label(new Rect(bannerRect.x, bannerRect.y + 6f, bannerRect.width, 32f), _announceTitle, _bannerStyle);
+            GUI.Label(
+                new Rect(bannerRect.x, bannerRect.y + 38f, bannerRect.width, 28f),
+                _announceSubtitle,
+                _bannerSubStyle
+            );
+            stackTop += bannerHeight + gap;
+        }
+
+        if (!string.IsNullOrEmpty(_countdownText))
+        {
+            var rect = new Rect(stackRight - countdownWidth, stackTop, countdownWidth, countdownHeight);
+            GUI.Box(rect, _countdownText, _countdownStyle);
+        }
+    }
+
+    private void EnsureStyles()
+    {
+        if (_bannerStyle != null && _countdownStyle != null)
+        {
+            return;
+        }
+
+        _bannerBg ??= MakeTex(2, 2, new Color(0.05f, 0.04f, 0.02f, 0.82f));
+        _countdownBg ??= MakeTex(2, 2, new Color(0.08f, 0.06f, 0.01f, 0.75f));
+
+        _bannerStyle = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.MiddleCenter,
             fontSize = 22,
             fontStyle = FontStyle.Bold,
+            normal = { textColor = new Color(1f, 0.82f, 0.15f, 1f), background = _bannerBg },
+            wordWrap = false,
         };
-        style.normal.textColor = new Color(1f, 0.85f, 0.2f, 1f);
 
-        var width = 320f;
-        var height = 40f;
-        var rect = new Rect((Screen.width - width) * 0.5f, 28f, width, height);
-        GUI.Box(rect, _countdownText, style);
+        _bannerSubStyle = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontSize = 16,
+            fontStyle = FontStyle.Normal,
+            normal = { textColor = new Color(1f, 0.92f, 0.65f, 1f) },
+            wordWrap = true,
+        };
+
+        _countdownStyle = new GUIStyle(GUI.skin.box)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontSize = 22,
+            fontStyle = FontStyle.Bold,
+            normal = { textColor = new Color(1f, 0.85f, 0.2f, 1f), background = _countdownBg },
+        };
+    }
+
+    private static Texture2D MakeTex(int width, int height, Color color)
+    {
+        var pixels = new Color[width * height];
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = color;
+        }
+
+        var tex = new Texture2D(width, height);
+        tex.SetPixels(pixels);
+        tex.Apply();
+        return tex;
     }
 
     private void SpawnAirdrop()
@@ -128,25 +264,44 @@ public class CurseEventComponent : MonoBehaviour
         }
 
         _airdropSpawned = true;
+        _announceTitle = "CURSE AIRDROP";
+        _announceSubtitle = "High-value crate inbound near the flare";
+        _announceUntil = Time.time + 5f;
+        _overlayHideAt = Time.time + 5f;
+        _countdownText = "CURSE AIRDROP  INBOUND";
 
         try
         {
+            ModLogger.Info(
+                $"Requesting InitAirdrop near {_flarePosition} "
+                    + $"(container={YellowFlareCursePlugin.CurseContainerId}, takeNearbyPoint=true)."
+            );
             _gameWorld.InitAirdrop(
                 YellowFlareCursePlugin.CurseContainerId,
                 takeNearbyPoint: true,
                 position: _flarePosition
             );
-            YellowFlareCursePlugin.Log.LogInfo(
-                $"[YellowFlareCurse] Airdrop requested near {_flarePosition} (container={YellowFlareCursePlugin.CurseContainerId})."
-            );
+            ModLogger.Info("InitAirdrop call completed — overlay will hide in 5s.");
         }
         catch (System.Exception ex)
         {
-            YellowFlareCursePlugin.Log.LogError($"[YellowFlareCurse] Failed to spawn airdrop: {ex}");
+            ModLogger.Error($"Failed to spawn airdrop: {ex}");
+            HideOverlay();
         }
     }
 
-    private int ApplyCurseSnapshot()
+    private void HideOverlay()
+    {
+        _overlayVisible = false;
+        _overlayHideAt = 0f;
+        _announceUntil = 0f;
+        _countdownText = string.Empty;
+        _announceTitle = string.Empty;
+        _announceSubtitle = string.Empty;
+        ModLogger.Debug("Overlay hidden — event UI finished.");
+    }
+
+    private int ApplyCurseSnapshot(bool initial)
     {
         if (_gameWorld == null)
         {
@@ -156,12 +311,17 @@ public class CurseEventComponent : MonoBehaviour
         var targets = CollectCurseTargets(_gameWorld);
         if (targets.Count == 0)
         {
-            YellowFlareCursePlugin.Log.LogWarning("[YellowFlareCurse] No player/group targets for curse.");
+            if (initial)
+            {
+                ModLogger.Warning("No player/group targets for curse.");
+            }
+
             return 0;
         }
 
-        var cursedGroups = 0;
-        var seenGroups = new HashSet<BotsGroup>();
+        var cursedBots = 0;
+        var scannedBots = 0;
+        var skippedRole = 0;
 
         foreach (var botPlayer in _gameWorld.AllAlivePlayersList)
         {
@@ -169,6 +329,8 @@ public class CurseEventComponent : MonoBehaviour
             {
                 continue;
             }
+
+            scannedBots++;
 
             var botOwner = botPlayer.AIData?.BotOwner;
             if (botOwner == null || botOwner.BotState != EBotState.Active)
@@ -178,11 +340,12 @@ public class CurseEventComponent : MonoBehaviour
 
             if (!IsEligibleRole(botOwner))
             {
+                skippedRole++;
                 continue;
             }
 
             var group = botOwner.BotsGroup;
-            if (group == null || !seenGroups.Add(group))
+            if (group == null)
             {
                 continue;
             }
@@ -191,29 +354,40 @@ public class CurseEventComponent : MonoBehaviour
             {
                 try
                 {
+                    // Hostility mark (not enough alone — especially with SAIN).
                     group.AddEnemy(target, EBotEnemyCause.addPlayer);
+
+                    // Give bots a last-known position so they path / hunt.
+                    group.ReportAboutEnemy(target, EEnemyPartVisibleType.Visible, botOwner);
+                    group.CalcGoalForBot(botOwner);
+
+                    // SAIN overrides ShallKnowEnemy — force a known place.
+                    SainCurseBridge.NotifySeen(botOwner, target);
                 }
                 catch (System.Exception ex)
                 {
-                    if (YellowFlareCursePlugin.Debug.Value)
-                    {
-                        YellowFlareCursePlugin.Log.LogWarning(
-                            $"[YellowFlareCurse] AddEnemy failed for {botOwner.Profile.Nickname}: {ex.Message}"
-                        );
-                    }
+                    ModLogger.Debug($"Curse apply failed for {botOwner.Profile.Nickname}: {ex.Message}");
                 }
             }
 
-            cursedGroups++;
-            if (YellowFlareCursePlugin.Debug.Value)
+            cursedBots++;
+            if (initial)
             {
-                YellowFlareCursePlugin.Log.LogInfo(
-                    $"[YellowFlareCurse] Cursed group of {botOwner.Profile.Nickname} ({botOwner.Profile.Info.Settings.Role})."
+                ModLogger.Debug(
+                    $"Cursed bot {botOwner.Profile.Nickname} ({botOwner.Profile.Info.Settings.Role})."
                 );
             }
         }
 
-        return cursedGroups;
+        if (initial || YellowFlareCursePlugin.Debug.Value)
+        {
+            ModLogger.Info(
+                $"Curse snapshot{(initial ? "" : " refresh")}: AliveAI={scannedBots}, "
+                    + $"skippedRole={skippedRole}, cursedBots={cursedBots}, targets={targets.Count}."
+            );
+        }
+
+        return cursedBots;
     }
 
     private static List<IPlayer> CollectCurseTargets(GameWorld gameWorld)
@@ -267,14 +441,14 @@ public class CurseEventComponent : MonoBehaviour
             or WildSpawnType.pmcBEAR;
     }
 
-    private static bool HasAirdropPoints()
+    private static int CountAirdropPoints()
     {
         try
         {
             var points = LocationScene.GetAll<AirdropPoint>();
             if (points == null)
             {
-                return false;
+                return 0;
             }
 
             var count = 0;
@@ -286,12 +460,12 @@ public class CurseEventComponent : MonoBehaviour
                 }
             }
 
-            return count > 0;
+            return count;
         }
         catch (System.Exception ex)
         {
-            YellowFlareCursePlugin.Log.LogWarning($"[YellowFlareCurse] AirdropPoint check failed: {ex.Message}");
-            return false;
+            ModLogger.Warning($"AirdropPoint check failed: {ex.Message}");
+            return 0;
         }
     }
 }

@@ -38,6 +38,9 @@ public static class CurseIds
 {
     public const string DefaultContainerId = "674a0fc0000000000000c001";
 
-    /// <summary>RSP-30 reactive signal cartridge (Yellow).</summary>
-    public const string YellowFlareTemplateId = "624c0b3340357b5f566e8766";
+    /// <summary>Ammo fired by RSP-30 Yellow (patron_rsp_yellow) — what HandleFlareSuccessEvent reports.</summary>
+    public const string YellowFlareTemplateId = "624c09e49b98e019a3315b66";
+
+    /// <summary>Handheld RSP-30 Yellow weapon/item id.</summary>
+    public const string YellowFlareWeaponId = "624c0b3340357b5f566e8766";
 }

@@ -19,8 +19,8 @@ public record ModMetadata : IModMetadata
     public string Name { get; init; } = "Yellow Flare Curse";
     public string Author { get; init; } = "gadjed";
     public List<string>? Contributors { get; init; } = null;
-    public SemanticVersioning.Version Version { get; init; } = new("1.1.1");
-    public SemanticVersioning.Range SptVersion { get; init; } = new("~4.1.0");
+    public SemanticVersioning.Version Version { get; init; } = new("1.2.0");
+    public SemanticVersioning.Range SptVersion { get; init; } = new(">=4.0.0 <4.2.0");
     public bool HasPrepatcher { get; init; } = false;
     public List<string>? Incompatibilities { get; init; } = null;
     public Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = null;
@@ -38,59 +38,105 @@ public class YellowFlareCurseMod(
 {
     public const string Tag = "[YellowFlareCurse]";
 
+    /// <summary>
+    /// toiletPaper is a forced-loot-only SPT profile with Supply crate icon (not Common/«общей поддержки»).
+    /// Weight is nearly 0 for random drops; we overwrite its ForcedLoot for the curse container.
+    /// </summary>
+    public static readonly SptAirdropTypeEnum CurseAirdropType = SptAirdropTypeEnum.toiletPaper;
+
     public static ModConfig Config { get; private set; } = new();
     public static MongoId CurseContainerId { get; private set; } = new(CurseIds.DefaultContainerId);
+    public static string CurseContainerIdString { get; private set; } = CurseIds.DefaultContainerId;
     public static Dictionary<MongoId, MinMax<int>> ForcedLoot { get; private set; } = new();
-    public static AirdropLoot? MixedLootProfile { get; private set; }
+    public static AirdropLoot? CurseLootProfile { get; private set; }
 
     public Task OnLoadAsync(CancellationToken cancellationToken)
     {
         var pathToMod = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
+        var fileLog = new ModFileLogger(
+            pathToMod,
+            msg => logger.Info(msg),
+            msg => logger.Warning(msg),
+            msg => logger.Error(msg),
+            msg => logger.Success(msg)
+        );
+        ModFileLogger.Instance = fileLog;
+
         var configPath = Path.Combine(pathToMod, "config.json");
         Config = File.Exists(configPath)
             ? modHelper.GetJsonDataFromFile<ModConfig>(pathToMod, "config.json")
             : new ModConfig();
 
+        fileLog.Info($"{Tag} Config loaded from {(File.Exists(configPath) ? configPath : "defaults")}.");
+
         if (!Config.Enabled)
         {
-            logger.Warning($"{Tag} Disabled via config.");
+            fileLog.Warning($"{Tag} Disabled via config.");
             return Task.CompletedTask;
         }
 
         if (string.IsNullOrWhiteSpace(Config.CurseContainerId) || Config.CurseContainerId.Length != 24)
         {
-            logger.Error($"{Tag} Invalid CurseContainerId; expected 24-char MongoId.");
+            fileLog.Error($"{Tag} Invalid CurseContainerId; expected 24-char MongoId.");
             return Task.CompletedTask;
         }
 
+        CurseContainerIdString = Config.CurseContainerId;
         CurseContainerId = new MongoId(Config.CurseContainerId);
         ForcedLoot = BuildForcedLoot(Config);
+        fileLog.Info($"{Tag} ForcedLoot built: {ForcedLoot.Count} template entries.");
 
-        airdropConfig.CustomAirdropMapping[CurseContainerId] = SptAirdropTypeEnum.mixed;
+        // Map curse container → Supply-style forced profile (NOT mixed/Common).
+        airdropConfig.CustomAirdropMapping[CurseContainerId] = CurseAirdropType;
+        fileLog.Info($"{Tag} CustomAirdropMapping[{CurseContainerId}] = {CurseAirdropType}.");
 
-        // Ensure mixed loot profile can carry forced stacks when our patch runs.
-        if (airdropConfig.Loot.TryGetValue(nameof(SptAirdropTypeEnum.mixed), out var mixedLoot)
-            || airdropConfig.Loot.TryGetValue("mixed", out mixedLoot))
+        if (!TryConfigureCurseLootProfile(airdropConfig, fileLog))
         {
-            mixedLoot.AllowBossItems = true;
-            MixedLootProfile = mixedLoot;
-        }
-        else
-        {
-            logger.Warning($"{Tag} Could not resolve mixed airdrop loot profile; forced loot patch may no-op.");
+            fileLog.Error($"{Tag} Failed to configure curse loot profile — airdrop will be wrong.");
+            return Task.CompletedTask;
         }
 
-        // EnablePatch() requires _harmony already; create it via EnablePatches().
         patchManager.PatcherName = "YellowFlareCurse";
         patchManager.AddPatch(new CurseAirdropLootPatch());
         patchManager.EnablePatches();
 
-        logger.Success(
-            $"{Tag} Loaded. Container={CurseContainerId}, ForcedLoot entries={ForcedLoot.Count}, "
-                + $"DelayHint={Config.AirdropDelaySeconds}s."
+        fileLog.Success(
+            $"{Tag} Loaded v1.2.0. Container={CurseContainerId}, Type={CurseAirdropType}, "
+                + $"ForcedLoot={ForcedLoot.Count}, DelayHint={Config.AirdropDelaySeconds}s. "
+                + $"FileLog={fileLog.LogFilePath}"
         );
 
         return Task.CompletedTask;
+    }
+
+    private static bool TryConfigureCurseLootProfile(AirdropConfig airdropConfig, ModFileLogger fileLog)
+    {
+        var key = CurseAirdropType.ToString();
+        if (
+            !airdropConfig.Loot.TryGetValue(key, out var profile)
+            && !airdropConfig.Loot.TryGetValue(key.ToLowerInvariant(), out profile)
+            && !airdropConfig.Loot.TryGetValue("toiletPaper", out profile)
+        )
+        {
+            fileLog.Warning($"{Tag} Could not resolve loot profile key '{key}'.");
+            return false;
+        }
+
+        // Forced-only table — no random fillers that turn it into a normal Supply crate.
+        profile.UseForcedLoot = true;
+        profile.ForcedLoot = ForcedLoot;
+        profile.AllowBossItems = true;
+        profile.WeaponPresetCount = new MinMax<int>(0, 0);
+        profile.ArmorPresetCount = new MinMax<int>(0, 0);
+        profile.ItemCount = new MinMax<int>(0, 0);
+        profile.WeaponCrateCount = new MinMax<int>(0, 0);
+
+        CurseLootProfile = profile;
+        fileLog.Info(
+            $"{Tag} Curse loot profile '{key}' configured: UseForcedLoot=true, "
+                + $"ForcedLoot={ForcedLoot.Count}, random counts zeroed, AllowBossItems=true."
+        );
+        return true;
     }
 
     private static Dictionary<MongoId, MinMax<int>> BuildForcedLoot(ModConfig config)
@@ -100,6 +146,7 @@ public class YellowFlareCurseMod(
         {
             if (string.IsNullOrWhiteSpace(tpl) || tpl.Length != 24)
             {
+                ModFileLogger.Instance?.Warning($"{Tag} Skipping invalid ForcedLoot tpl '{tpl}'.");
                 continue;
             }
 

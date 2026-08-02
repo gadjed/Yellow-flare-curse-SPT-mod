@@ -6,7 +6,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>gadjed</Authors>
   </PropertyGroup>
 
@@ -31,6 +31,10 @@
     </Reference>
     <Reference Include="spt-reflection">
       <HintPath>References\spt-reflection.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="spt-common">
+      <HintPath>References\spt-common.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="DissonanceVoip">

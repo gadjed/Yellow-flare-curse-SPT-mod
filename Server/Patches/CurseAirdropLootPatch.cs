@@ -7,14 +7,11 @@ using SPTarkov.Server.Core.Services.InRaid;
 namespace YellowFlareCurse.Patches;
 
 /// <summary>
-/// When the client requests loot for the curse container id, force the configured high-value loot table.
+/// Safety net: when the client requests loot for the curse container, ensure UseForcedLoot is on.
+/// Primary setup is done at load by rewriting the toiletPaper profile + CustomAirdropMapping.
 /// </summary>
 public class CurseAirdropLootPatch : AbstractPatch
 {
-    private static bool _active;
-    private static bool _previousUseForced;
-    private static Dictionary<SPTarkov.Server.Core.Models.Common.MongoId, SPTarkov.Server.Core.Models.Common.MinMax<int>>? _previousForced;
-
     protected override MethodBase GetTargetMethod()
     {
         return AccessTools.Method(typeof(AirdropService), nameof(AirdropService.GenerateCustomAirdropLoot));
@@ -23,35 +20,51 @@ public class CurseAirdropLootPatch : AbstractPatch
     [PatchPrefix]
     public static void Prefix(GetAirdropLootRequest request)
     {
-        _active = false;
-        _previousForced = null;
+        var log = ModFileLogger.Instance;
+        var container = request?.ContainerId.ToString() ?? "<null>";
+        log?.Info($"{YellowFlareCurseMod.Tag} GenerateCustomAirdropLoot. ContainerId={container}.");
 
-        var loot = YellowFlareCurseMod.MixedLootProfile;
-        if (loot is null
-            || request.ContainerId != YellowFlareCurseMod.CurseContainerId
-            || YellowFlareCurseMod.ForcedLoot.Count == 0)
+        if (request is null || !IsCurseContainer(container))
         {
+            log?.Info(
+                $"{YellowFlareCurseMod.Tag} Not curse container (want={YellowFlareCurseMod.CurseContainerIdString}) — pass-through."
+            );
             return;
         }
 
-        _previousUseForced = loot.UseForcedLoot;
-        _previousForced = loot.ForcedLoot;
+        var loot = YellowFlareCurseMod.CurseLootProfile;
+        if (loot is null)
+        {
+            log?.Warning($"{YellowFlareCurseMod.Tag} CurseLootProfile is null — cannot force loot.");
+            return;
+        }
+
+        if (YellowFlareCurseMod.ForcedLoot.Count == 0)
+        {
+            log?.Warning($"{YellowFlareCurseMod.Tag} Curse container matched but ForcedLoot is empty.");
+            return;
+        }
+
         loot.UseForcedLoot = true;
         loot.ForcedLoot = YellowFlareCurseMod.ForcedLoot;
-        _active = true;
+        loot.WeaponPresetCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
+        loot.ArmorPresetCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
+        loot.ItemCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
+        loot.WeaponCrateCount = new SPTarkov.Server.Core.Models.Common.MinMax<int>(0, 0);
+
+        log?.Success(
+            $"{YellowFlareCurseMod.Tag} Forcing curse loot on {container} "
+                + $"({YellowFlareCurseMod.ForcedLoot.Count} entries, type={YellowFlareCurseMod.CurseAirdropType})."
+        );
     }
 
-    [PatchPostfix]
-    public static void Postfix()
+    private static bool IsCurseContainer(string container)
     {
-        if (!_active || YellowFlareCurseMod.MixedLootProfile is null)
-        {
-            return;
-        }
-
-        YellowFlareCurseMod.MixedLootProfile.UseForcedLoot = _previousUseForced;
-        YellowFlareCurseMod.MixedLootProfile.ForcedLoot = _previousForced;
-        _active = false;
-        _previousForced = null;
+        return string.Equals(container, YellowFlareCurseMod.CurseContainerIdString, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(
+                container,
+                YellowFlareCurseMod.CurseContainerId.ToString(),
+                StringComparison.OrdinalIgnoreCase
+            );
     }
 }
