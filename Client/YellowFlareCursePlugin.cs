@@ -18,7 +18,7 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "gadjed.yellowflarecurse";
     public const string PluginName = "Yellow Flare Curse";
-    public const string PluginVersion = "1.4.4";
+    public const string PluginVersion = "1.4.5";
 
     /// <summary>
     /// Ammo template fired by RSP-30 Yellow (HandleFlareSuccessEvent receives ammo, not the handheld weapon id).
@@ -45,6 +45,8 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
     public static ConfigEntry<TagillaVariant> TagillaType { get; private set; } = null!;
     public static ConfigEntry<float> TagillaSpawnMinRadius { get; private set; } = null!;
     public static ConfigEntry<float> TagillaSpawnMaxRadius { get; private set; } = null!;
+    public static ConfigEntry<bool> SpawnCultists { get; private set; } = null!;
+    public static ConfigEntry<int> CultistEscortCount { get; private set; } = null!;
 
     private void Awake()
     {
@@ -76,13 +78,13 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
             "3. Curse",
             "IncludePlayerGroup",
             true,
-            "Existing scav/PMC bots also aggro your teammates (same GroupId)."
+            "Cursed scavs / Tagilla / cultists also aggro your teammates (same GroupId)."
         );
         TeleportBotsNearPlayer = Config.Bind(
             "3. Curse",
             "TeleportBotsNearPlayer",
             true,
-            "On curse start (host/authority only), teleport eligible scav/PMC AI into a ring near the player."
+            "On curse start (host/authority only), teleport eligible scav AI (not PMCs) into a ring near the player."
         );
         TeleportMinRadius = Config.Bind(
             "3. Curse",
@@ -100,7 +102,7 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
             "3. Curse",
             "AiAlliance",
             true,
-            "During the curse, make eligible AI allied with each other so they only hunt players."
+            "During the curse, make eligible scav AI allied with each other so they only hunt players."
         );
         SpawnTagilla = Config.Bind(
             "3. Curse",
@@ -130,6 +132,21 @@ public class YellowFlareCursePlugin : BaseUnityPlugin
             new ConfigDescription(
                 "Maximum NavMesh ring radius (meters) when placing Tagilla near the player.",
                 new AcceptableValueRange<float>(10f, 150f)
+            )
+        );
+        SpawnCultists = Config.Bind(
+            "3. Curse",
+            "SpawnCultists",
+            false,
+            "On curse start (host/authority), also spawn a cultist squad (priest + warriors) near the player."
+        );
+        CultistEscortCount = Config.Bind(
+            "3. Curse",
+            "CultistEscortCount",
+            4,
+            new ConfigDescription(
+                "Number of sectantWarrior escorts spawned with the cultist priest.",
+                new AcceptableValueRange<int>(1, 8)
             )
         );
 

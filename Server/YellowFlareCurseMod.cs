@@ -2,6 +2,7 @@
 using SPTarkov.DI.Annotations;
 using SPTarkov.Reflection.Patching;
 using SPTarkov.Server.Core.DI;
+using SPTarkov.Server.Core.Generators;
 using SPTarkov.Server.Core.Helpers;
 using SPTarkov.Server.Core.Models.Common;
 using SPTarkov.Server.Core.Models.Enums;
@@ -20,7 +21,7 @@ public record ModMetadata : AbstractModMetadata
     public override string Name { get; init; } = "Yellow Flare Curse";
     public override string Author { get; init; } = "gadjed";
     public override List<string>? Contributors { get; init; } = null;
-    public override SemanticVersioning.Version Version { get; init; } = new("1.4.4");
+    public override SemanticVersioning.Version Version { get; init; } = new("1.4.5");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.13");
     public override List<string>? Incompatibilities { get; init; } = null;
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = null;
@@ -34,18 +35,27 @@ public class YellowFlareCurseMod(
     ISptLogger<YellowFlareCurseMod> logger,
     ModHelper modHelper,
     ConfigServer configServer,
+    LootGenerator lootGenerator,
     PatchManager patchManager
 ) : IOnLoad
 {
     public const string Tag = "[YellowFlareCurse]";
 
+    /// <summary>
+    /// Fallback only if the replace-prefix fails. barter → SUPPLY («техобеспечения»), not COMMON.
+    /// </summary>
+    public static readonly SptAirdropTypeEnum CurseAirdropType = SptAirdropTypeEnum.barter;
+
     public static ModConfig Config { get; private set; } = new();
     public static MongoId CurseContainerId { get; private set; } = new(CurseIds.DefaultContainerId);
+    public static string CurseContainerIdString { get; private set; } = CurseIds.DefaultContainerId;
     public static Dictionary<MongoId, MinMax<int>> ForcedLoot { get; private set; } = new();
-    public static AirdropLoot? MixedLootProfile { get; private set; }
+    public static LootGenerator? LootGenerator { get; private set; }
 
     public Task OnLoad()
     {
+        LootGenerator = lootGenerator;
+
         var pathToMod = modHelper.GetAbsolutePathToModFolder(Assembly.GetExecutingAssembly());
         var fileLog = new ModFileLogger(
             pathToMod,
@@ -75,30 +85,22 @@ public class YellowFlareCurseMod(
             return Task.CompletedTask;
         }
 
+        CurseContainerIdString = Config.CurseContainerId;
         CurseContainerId = new MongoId(Config.CurseContainerId);
         ForcedLoot = BuildForcedLoot(Config);
+        fileLog.Info($"{Tag} ForcedLoot built: {ForcedLoot.Count} template entries.");
 
         var airdropConfig = configServer.GetConfig<AirdropConfig>();
-        airdropConfig.CustomAirdropMapping[CurseContainerId] = SptAirdropTypeEnum.mixed;
-
-        // Ensure mixed loot profile can carry forced stacks when our patch runs.
-        if (airdropConfig.Loot.TryGetValue(nameof(SptAirdropTypeEnum.mixed), out var mixedLoot)
-            || airdropConfig.Loot.TryGetValue("mixed", out mixedLoot))
-        {
-            mixedLoot.AllowBossItems = true;
-            MixedLootProfile = mixedLoot;
-        }
-        else
-        {
-            fileLog.Warning($"{Tag} Could not resolve mixed airdrop loot profile; forced loot patch may no-op.");
-        }
+        airdropConfig.CustomAirdropMapping[CurseContainerId] = CurseAirdropType;
+        fileLog.Info($"{Tag} CustomAirdropMapping[{CurseContainerId}] = {CurseAirdropType} (fallback).");
 
         patchManager.PatcherName = "YellowFlareCurse";
         patchManager.AddPatch(new CurseAirdropLootPatch());
         patchManager.EnablePatches();
 
         fileLog.Success(
-            $"{Tag} Loaded v1.4.4. Container={CurseContainerId}, ForcedLoot={ForcedLoot.Count}, "
+            $"{Tag} Loaded v1.4.5. Container={CurseContainerId}, Type={CurseAirdropType}, "
+                + $"ForcedLoot={ForcedLoot.Count}, crate=SUPPLY/техобеспечения. "
                 + $"FileLog={fileLog.LogFilePath}"
         );
 
@@ -112,6 +114,7 @@ public class YellowFlareCurseMod(
         {
             if (string.IsNullOrWhiteSpace(tpl) || tpl.Length != 24)
             {
+                ModFileLogger.Instance?.Warning($"{Tag} Skipping invalid ForcedLoot tpl '{tpl}'.");
                 continue;
             }
 

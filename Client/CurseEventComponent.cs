@@ -34,6 +34,9 @@ public class CurseEventComponent : MonoBehaviour
     private bool _tagillaSpawnRequested;
     private bool _tagillaPlaced;
     private bool _tagillaAggroed;
+    private bool _cultistsSpawnRequested;
+    private bool _cultistsPlaced;
+    private bool _cultistsAggroed;
     private float _airdropAtTime;
     private float _announceUntil;
     private float _overlayHideAt;
@@ -63,6 +66,9 @@ public class CurseEventComponent : MonoBehaviour
         _tagillaSpawnRequested = false;
         _tagillaPlaced = false;
         _tagillaAggroed = false;
+        _cultistsSpawnRequested = false;
+        _cultistsPlaced = false;
+        _cultistsAggroed = false;
         _announceUntil = 0f;
         _overlayHideAt = 0f;
         _nextCurseRefresh = 0f;
@@ -77,6 +83,7 @@ public class CurseEventComponent : MonoBehaviour
                 + $"Enabled={YellowFlareCursePlugin.Enabled.Value}, "
                 + $"Delay={YellowFlareCursePlugin.AirdropDelaySeconds.Value:0}s, "
                 + $"SpawnTagilla={YellowFlareCursePlugin.SpawnTagilla.Value}, "
+                + $"SpawnCultists={YellowFlareCursePlugin.SpawnCultists.Value}, "
                 + $"Authority={FikaHost.IsAuthority()}."
         );
     }
@@ -141,6 +148,9 @@ public class CurseEventComponent : MonoBehaviour
         _tagillaSpawnRequested = false;
         _tagillaPlaced = false;
         _tagillaAggroed = false;
+        _cultistsSpawnRequested = false;
+        _cultistsPlaced = false;
+        _cultistsAggroed = false;
         _flarePosition = flarePosition;
         var delay = YellowFlareCursePlugin.AirdropDelaySeconds.Value;
         _airdropAtTime = Time.time + delay;
@@ -150,35 +160,42 @@ public class CurseEventComponent : MonoBehaviour
 
         var minutes = Mathf.FloorToInt(delay / 60f);
         var seconds = Mathf.FloorToInt(delay % 60f);
-        var tagillaHint = YellowFlareCursePlugin.SpawnTagilla.Value
-            ? (YellowFlareCursePlugin.TagillaType.Value == TagillaVariant.Labyrinth
-                ? " · Labyrinth Tagilla inbound"
-                : " · Tagilla inbound")
-            : string.Empty;
+        var huntHints = BuildHuntHints();
         _announceTitle = "YELLOW FLARE CURSE";
         if (_hasAirdropSupport)
         {
             _announceSubtitle =
-                $"Scavs & PMCs are hunting you{tagillaHint}  ·  Airdrop in {minutes:00}:{seconds:00}";
+                $"Scavs are hunting you{huntHints}  ·  Airdrop in {minutes:00}:{seconds:00}";
             _countdownText = $"AIRDROP  {minutes:00}:{seconds:00}";
         }
         else
         {
-            _announceSubtitle = $"Scavs & PMCs are hunting you{tagillaHint}  ·  No airdrop on this map";
-            _countdownText = YellowFlareCursePlugin.SpawnTagilla.Value ? "TAGILLA  INBOUND" : "CURSE  ACTIVE";
+            _announceSubtitle = $"Scavs are hunting you{huntHints}  ·  No airdrop on this map";
+            _countdownText = YellowFlareCursePlugin.SpawnTagilla.Value || YellowFlareCursePlugin.SpawnCultists.Value
+                ? "HOSTILES  INBOUND"
+                : "CURSE  ACTIVE";
         }
+
+        var spawnNear = _gameWorld.MainPlayer is { HealthController.IsAlive: true } main
+            ? main.Position
+            : flarePosition;
 
         if (YellowFlareCursePlugin.SpawnTagilla.Value && FikaHost.IsAuthority())
         {
-            // Prefer player feet over flare sky position for boss PerfectPos.
-            var spawnNear = _gameWorld.MainPlayer is { HealthController.IsAlive: true } main
-                ? main.Position
-                : flarePosition;
             TrySpawnTagilla(spawnNear);
         }
         else if (YellowFlareCursePlugin.SpawnTagilla.Value)
         {
             ModLogger.Info("Tagilla spawn skipped — not Fika host/authority.");
+        }
+
+        if (YellowFlareCursePlugin.SpawnCultists.Value && FikaHost.IsAuthority())
+        {
+            TrySpawnCultists(spawnNear);
+        }
+        else if (YellowFlareCursePlugin.SpawnCultists.Value)
+        {
+            ModLogger.Info("Cultist spawn skipped — not Fika host/authority.");
         }
 
         if (
@@ -204,9 +221,30 @@ public class CurseEventComponent : MonoBehaviour
             $"CURSE STARTED at {flarePosition}. AirdropPoints={pointCount}, "
                 + $"Airdrop={(_hasAirdropSupport ? $"in {delay:0}s" : "skipped")}. "
                 + $"Tagilla={YellowFlareCursePlugin.SpawnTagilla.Value}, "
+                + $"Cultists={YellowFlareCursePlugin.SpawnCultists.Value}, "
                 + $"Teleport={YellowFlareCursePlugin.TeleportBotsNearPlayer.Value}, "
                 + $"Alliance={AllianceActive}, Authority={FikaHost.IsAuthority()}."
         );
+    }
+
+    private static string BuildHuntHints()
+    {
+        var parts = new List<string>();
+        if (YellowFlareCursePlugin.SpawnTagilla.Value)
+        {
+            parts.Add(
+                YellowFlareCursePlugin.TagillaType.Value == TagillaVariant.Labyrinth
+                    ? "Labyrinth Tagilla inbound"
+                    : "Tagilla inbound"
+            );
+        }
+
+        if (YellowFlareCursePlugin.SpawnCultists.Value)
+        {
+            parts.Add("cultists inbound");
+        }
+
+        return parts.Count == 0 ? string.Empty : " · " + string.Join(" · ", parts);
     }
 
     private IEnumerator TeleportThenCurseRoutine()
@@ -330,6 +368,7 @@ public class CurseEventComponent : MonoBehaviour
 
             ApplyCurseSnapshot(initial: false);
             TryAggroPendingTagilla();
+            TryAggroPendingCultists();
         }
 
         if (_airdropSpawned)
@@ -598,7 +637,7 @@ public class CurseEventComponent : MonoBehaviour
                 continue;
             }
 
-            if (!IsEligibleRole(botOwner) && !IsTagilla(botOwner))
+            if (!IsEligibleRole(botOwner) && !IsTagilla(botOwner) && !IsCultist(botOwner))
             {
                 skippedRole++;
                 continue;
@@ -815,6 +854,7 @@ public class CurseEventComponent : MonoBehaviour
         return Vector3.Distance(a, b);
     }
 
+    /// <summary>Scav / wild roles only — PMCs are never teleported or alliance-cursed.</summary>
     private static bool IsEligibleRole(BotOwner bot)
     {
         var role = bot.Profile.Info.Settings.Role;
@@ -822,10 +862,7 @@ public class CurseEventComponent : MonoBehaviour
             or WildSpawnType.marksman
             or WildSpawnType.cursedAssault
             or WildSpawnType.assaultGroup
-            or WildSpawnType.crazyAssaultEvent
-            or WildSpawnType.pmcBot
-            or WildSpawnType.pmcUSEC
-            or WildSpawnType.pmcBEAR;
+            or WildSpawnType.crazyAssaultEvent;
     }
 
     private static bool IsTagilla(BotOwner bot)
@@ -835,6 +872,16 @@ public class CurseEventComponent : MonoBehaviour
             or WildSpawnType.bossTagillaAgro
             or WildSpawnType.followerTagilla
             or WildSpawnType.tagillaHelperAgro;
+    }
+
+    private static bool IsCultist(BotOwner bot)
+    {
+        var role = bot.Profile.Info.Settings.Role;
+        return role is WildSpawnType.sectantPriest
+            or WildSpawnType.sectantWarrior
+            or WildSpawnType.sectantOni
+            or WildSpawnType.sectantPrizrak
+            or WildSpawnType.sectantPredvestnik;
     }
 
     private static (WildSpawnType Role, string BossName, string EscortType) GetSelectedTagillaSpawn()
@@ -1078,7 +1125,7 @@ public class CurseEventComponent : MonoBehaviour
         }
     }
 
-    private void AggroBotOnCurseTargets(BotOwner botOwner)
+    private void AggroBotOnCurseTargets(BotOwner botOwner, string label = "Boss")
     {
         if (_gameWorld == null)
         {
@@ -1090,7 +1137,7 @@ public class CurseEventComponent : MonoBehaviour
         if (group == null || targets.Count == 0)
         {
             ModLogger.Warning(
-                $"Tagilla aggro skipped — group={(group == null ? "null" : "ok")}, targets={targets.Count}."
+                $"{label} aggro skipped — group={(group == null ? "null" : "ok")}, targets={targets.Count}."
             );
             return;
         }
@@ -1115,17 +1162,263 @@ public class CurseEventComponent : MonoBehaviour
 
                 SainCurseBridge.NotifySeen(botOwner, target);
                 ModLogger.Debug(
-                    $"Tagilla AddEnemy+Report → {target.Profile?.Nickname ?? target.ProfileId}."
+                    $"{label} AddEnemy+Report → {target.Profile?.Nickname ?? target.ProfileId}."
                 );
             }
             catch (System.Exception ex)
             {
-                ModLogger.Warning($"Tagilla aggro failed: {ex.Message}");
+                ModLogger.Warning($"{label} aggro failed: {ex.Message}");
             }
         }
     }
 
     private Player? FindAliveTagillaPlayer()
+    {
+        return FindAliveBossPlayer(IsTagilla);
+    }
+
+    private void TrySpawnCultists(Vector3 near)
+    {
+        if (_cultistsSpawnRequested)
+        {
+            return;
+        }
+
+        _cultistsSpawnRequested = true;
+        var escortCount = Mathf.Clamp(YellowFlareCursePlugin.CultistEscortCount.Value, 1, 8);
+
+        try
+        {
+            var botGame = Singleton<IBotGame>.Instance;
+            var botsController = botGame?.BotsController;
+            if (botsController == null)
+            {
+                ModLogger.Error("Cultist spawn failed — BotsController is null.");
+                return;
+            }
+
+            var wave = new BossLocationSpawn
+            {
+                BossName = "sectantPriest",
+                BossChance = 100f,
+                BossZone = string.Empty,
+                BossPlayer = false,
+                BossDifficult = "hard",
+                BossEscortDifficult = "hard",
+                BossEscortType = "sectantWarrior",
+                BossEscortAmount = escortCount.ToString(),
+                Time = -1f,
+                Delay = 0f,
+                TriggerId = string.Empty,
+                TriggerName = string.Empty,
+                IgnoreMaxBots = true,
+                ForceSpawn = true,
+                PerfectPos = near,
+                Supports = null,
+            };
+            wave.Init();
+            wave.PerfectPos = near;
+            wave.ShallSpawn = true;
+            wave.ForceSpawn = true;
+            wave.IgnoreMaxBots = true;
+
+            botsController.ActivateBotsByWave(wave);
+            ModLogger.Info($"Requested cultist wave (priest + {escortCount} warriors) near {near}.");
+            StartCoroutine(PlaceCultistsWhenReady(near));
+        }
+        catch (System.Exception ex)
+        {
+            ModLogger.Error($"Cultist BossLocationSpawn failed: {ex}");
+        }
+    }
+
+    private IEnumerator PlaceCultistsWhenReady(Vector3 near)
+    {
+        var deadline = Time.time + TagillaWaitTimeoutSeconds;
+        var anyPlaced = false;
+
+        while (Time.time < deadline)
+        {
+            var cultists = FindAliveCultistPlayers();
+            if (cultists.Count == 0)
+            {
+                yield return new WaitForSeconds(0.5f);
+                continue;
+            }
+
+            if (!_cultistsPlaced)
+            {
+                foreach (var cultist in cultists)
+                {
+                    TeleportBotToRing(cultist, near, "Cultist");
+                }
+
+                _cultistsPlaced = true;
+                anyPlaced = true;
+                yield return new WaitForSeconds(0.5f);
+            }
+
+            if (TryAggroAllCultists())
+            {
+                yield break;
+            }
+
+            yield return new WaitForSeconds(0.5f);
+        }
+
+        if (anyPlaced || FindAliveCultistPlayers().Count > 0)
+        {
+            foreach (var cultist in FindAliveCultistPlayers())
+            {
+                var botOwner = cultist.AIData?.BotOwner;
+                if (botOwner != null)
+                {
+                    AggroBotOnCurseTargets(botOwner, "Cultist");
+                }
+            }
+
+            _cultistsAggroed = true;
+            ModLogger.Warning("Cultist aggro forced after wait timeout.");
+            yield break;
+        }
+
+        ModLogger.Warning(
+            $"Cultists did not appear/activate within {TagillaWaitTimeoutSeconds:0}s after spawn request."
+        );
+    }
+
+    private void TryAggroPendingCultists()
+    {
+        if (_cultistsAggroed || !_cultistsSpawnRequested || _gameWorld == null)
+        {
+            return;
+        }
+
+        var cultists = FindAliveCultistPlayers();
+        if (cultists.Count == 0)
+        {
+            return;
+        }
+
+        if (!_cultistsPlaced)
+        {
+            var center = _gameWorld.MainPlayer is { HealthController.IsAlive: true } main
+                ? main.Position
+                : _flarePosition;
+            foreach (var cultist in cultists)
+            {
+                TeleportBotToRing(cultist, center, "Cultist");
+            }
+
+            _cultistsPlaced = true;
+        }
+
+        TryAggroAllCultists();
+    }
+
+    private bool TryAggroAllCultists()
+    {
+        var cultists = FindAliveCultistPlayers();
+        if (cultists.Count == 0)
+        {
+            return false;
+        }
+
+        var ready = 0;
+        foreach (var cultist in cultists)
+        {
+            var botOwner = cultist.AIData?.BotOwner;
+            if (botOwner == null || botOwner.BotState != EBotState.Active)
+            {
+                continue;
+            }
+
+            AggroBotOnCurseTargets(botOwner, "Cultist");
+            ready++;
+        }
+
+        if (ready == 0)
+        {
+            return false;
+        }
+
+        _cultistsAggroed = ready >= cultists.Count;
+        if (_cultistsAggroed)
+        {
+            ModLogger.Info($"Cultists cursed/aggroed ({ready}/{cultists.Count}).");
+        }
+
+        return _cultistsAggroed;
+    }
+
+    private void TeleportBotToRing(Player bot, Vector3 near, string label)
+    {
+        var minR = Mathf.Min(
+            YellowFlareCursePlugin.TagillaSpawnMinRadius.Value,
+            YellowFlareCursePlugin.TagillaSpawnMaxRadius.Value
+        );
+        var maxR = Mathf.Max(
+            YellowFlareCursePlugin.TagillaSpawnMinRadius.Value,
+            YellowFlareCursePlugin.TagillaSpawnMaxRadius.Value
+        );
+
+        var center = _gameWorld?.MainPlayer is { HealthController.IsAlive: true } main
+            ? main.Position
+            : near;
+        var preferredRadius = UnityEngine.Random.Range(minR, maxR);
+        var preferredAngle = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+
+        if (!TryFindRingNavMesh(center, minR, maxR, preferredAngle, preferredRadius, out var navPos, out var actualR))
+        {
+            ModLogger.Warning(
+                $"Could not find ring NavMesh for {label} (wanted {minR:0}-{maxR:0}m around {center}); leaving spawn position."
+            );
+            return;
+        }
+
+        try
+        {
+            bot.Teleport(navPos, onServerToo: true);
+            bot.AIData?.BotOwner?.Mover?.Teleport(navPos);
+            ModLogger.Info($"{label} teleported to {navPos} (actual r={actualR:0}m from player).");
+        }
+        catch (System.Exception ex)
+        {
+            ModLogger.Warning($"{label} teleport failed: {ex.Message}");
+        }
+    }
+
+    private List<Player> FindAliveCultistPlayers()
+    {
+        var list = new List<Player>();
+        if (_gameWorld == null)
+        {
+            return list;
+        }
+
+        foreach (var botPlayer in _gameWorld.AllAlivePlayersList)
+        {
+            if (botPlayer == null || !botPlayer.IsAI || !botPlayer.HealthController.IsAlive)
+            {
+                continue;
+            }
+
+            var botOwner = botPlayer.AIData?.BotOwner;
+            if (botOwner == null)
+            {
+                continue;
+            }
+
+            if (IsCultist(botOwner))
+            {
+                list.Add(botPlayer);
+            }
+        }
+
+        return list;
+    }
+
+    private Player? FindAliveBossPlayer(System.Func<BotOwner, bool> predicate)
     {
         if (_gameWorld == null)
         {
@@ -1145,7 +1438,7 @@ public class CurseEventComponent : MonoBehaviour
                 continue;
             }
 
-            if (IsTagilla(botOwner))
+            if (predicate(botOwner))
             {
                 return botPlayer;
             }
